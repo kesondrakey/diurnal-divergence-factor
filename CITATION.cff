@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: "Key"
+    given-names: "Kesondra"
+    orcid: "https://orcid.org/0000-0001-6382-913X"
+title: "diurnal-divergence-factor"
+version: "v1.0.0"
+date-released: 2026-03-29
+url: "https://github.com/kesondrakey/diurnal-divergence-factor"
+abstract: "Code and data for analyses supporting the manuscript 'Towards Biophysically-informed Drought Indicators Across US Ecosystems'."
+license: "MIT"
