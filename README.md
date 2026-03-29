@@ -48,4 +48,12 @@ Analyses were conducted in R. Required packages are listed in the scripts.
 
 ## License
 
-Code in this repository is licensed under the MIT License. Processed data are licensed under the Creative Commons Attribution 4.0 International License (CC BY 4.0).
+Code in this repository is licensed under the MIT License.
+
+The original eddy covariance data used to generate the processed datasets are publicly available under the Creative Commons Attribution 4.0 International License (CC BY 4.0). Eddy covariance data were sourced from the AmeriFlux, National Ecological Observatory Network (NEON), and FLUXNET networks. AmeriFlux BASE data processing is described by Chu et al. (2023), and FLUXNET data products and processing are described by Pastorello et al. (2020). Site-level metadata, DOIs, and citations are provided in the associated manuscript.
+
+## References
+
+Chu, H., Christianson, D. S., & Cheah, Y. W. (2023). AmeriFlux BASE data pipeline to support network growth and data sharing. *Scientific Data, 10*, 614. https://doi.org/10.1038/s41597-023-02531-2
+
+Pastorello, G., Trotta, C., Canfora, E., Chu, H., Christianson, D., Cheah, Y.-W., Poindexter, C., Chen, J., Elbashandy, A., Humphrey, M., Isaac, P., Polidori, D., Reichstein, M., Ribeca, A., van Ingen, C., Vuichard, N., Zhang, L., Amiro, B., Ammann, C., … Papale, D. (2020). The FLUXNET2015 dataset and the ONEFlux processing pipeline for eddy covariance data. *Scientific Data, 7*(1), 1. https://doi.org/10.1038/s41597-020-0534-3
