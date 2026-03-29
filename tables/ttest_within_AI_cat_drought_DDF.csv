@@ -1,0 +1,3 @@
+Category,AI_cat,t,df,p,sig,baseline,comparison,med_diff
+AI_cat,Arid,7.213781024326522,6522.241453774808,6.057660159560445e-13,***,ND,Drought,-0.5
+AI_cat,Humid,8.548584597962051,10720.75719264046,1.4153022887485162e-17,***,ND,Drought,-0.5

@@ -1,0 +1,973 @@
+---
+title: "Statistics"
+author: "Kesondra Key"
+date: "2026-03-29"
+output: 
+  pdf_document: default
+---
+
+IMPORTANT: 
+Change "E:/Github/diurnal-divergence-factor/data/" to your own file location in the setup and on line 263
+
+Purpose: Run statistics and generate tables
+Note: Not all of the generated .csv's were used!
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+#IMPORTANT: 
+#Change "E:/Github/diurnal-divergence-factor/" to your own file location 
+#input dir
+daily_path <- "E:/Github/diurnal-divergence-factor/data/Masterfile.csv"
+#output dir
+output_dir <- "E:/Github/diurnal-divergence-factor/tables"
+
+
+#Relevant packages installation
+packages <- c(
+  "dplyr", "tidyr", "ggplot2", "ggdist",
+  "lubridate", "reshape2", "naniar", "BBmisc",
+  "ggrepel", "gghighlight", "ggtext",
+  "gridExtra", "grid","multcomp", "multcompView",
+  "readr", "stringr", "tinytex", "knitr"
+)
+
+to_install <- packages[!packages %in% installed.packages()[, "Package"]]
+
+if (length(to_install) > 0) {
+  install.packages(to_install)
+}
+
+invisible(lapply(packages, library, character.only = TRUE))
+
+# Libraries
+library(dplyr); library(tidyr); library(ggplot2); library(ggdist)
+library(lubridate); library(reshape2); library(naniar); library(BBmisc)
+library(ggrepel); library(gghighlight); library(ggtext)
+library(gridExtra); library(grid); library(multcomp); library(multcompView)
+library(readr); library(stringr); library(tinytex); library(knitr)
+
+Daily <- readr::read_csv(daily_path, show_col_types = FALSE)
+
+Daily <- Daily %>%
+  mutate(
+    Date = as.Date(Date))
+
+# Map p-values to stars
+p_to_stars <- function(p) {
+  if (is.na(p)) return("ns")
+  if (p < 0.001) return("***")
+  if (p < 0.01)  return("**")
+  if (p < 0.05)  return("*")
+  "ns"
+}
+
+# Tukey letters (for 3+ groups) per data.frame
+tukey_letters <- function(dat, x, y) {
+  dat <- dat[!is.na(dat[[x]]) & !is.na(dat[[y]]), , drop = FALSE]
+  # group info
+  g    <- factor(dat[[x]])
+  levs <- levels(g)
+  k    <- nlevels(g)
+
+  make_tbl <- function(names_vec, labs_vec) {
+    tibble::tibble(!!rlang::sym(x) := names_vec, .label = labs_vec)
+  }
+
+  if (k < 1) {
+    return(make_tbl(character(0), character(0)))
+  }
+  if (k == 1) {
+    return(make_tbl(levs, NA_character_))
+  }
+  if (k == 2) {
+    p <- tryCatch(stats::t.test(dat[[y]] ~ g)$p.value, error = function(e) NA_real_)
+    labs <- if (is.na(p) || p >= 0.05) c("a","a") else c("a","b")
+    names(labs) <- levs
+    return(make_tbl(names(labs), unname(labs)))
+  }
+
+  # k >= 3 → ANOVA + Tukey
+  a  <- stats::aov(stats::as.formula(paste(y, "~", x)), data = dat)
+  hs <- tryCatch(stats::TukeyHSD(a)[[1]][, "p adj"], error = function(e) NULL)
+
+  if (is.null(hs)) {
+    # fallback: give everyone "a"
+    labs_full <- setNames(rep("a", k), levs)
+  } else {
+    tuk <- multcompView::multcompLetters(hs)$Letters   # named char vector
+    # complete to all levels without modifyList()
+    labs_full <- setNames(rep("a", k), levs)
+    common <- intersect(names(tuk), names(labs_full))
+    labs_full[common] <- tuk[common]
+  }
+  make_tbl(names(labs_full), unname(labs_full))
+}
+
+select <- dplyr::select
+```
+
+General information about the dataframe like number of sites and number of droughts per category
+```{r General_Information, echo=FALSE}
+periods <- Daily %>%
+  filter(drought_cat %in% c("LS","MS"), !is.na(Cluster)) %>%
+  distinct(sitename, Cluster, drought_cat, DroughtNo, ClusterStart, min_scaled_SWC)
+
+periods %>%
+  count(drought_cat, name = "n_periods")
+
+periods %>%
+  count(drought_cat, sitename, name = "n_periods") %>%
+  group_by(drought_cat) %>%
+  summarise(
+    n_sites = n_distinct(sitename),
+    median_periods_per_site = median(n_periods),
+    max_periods_per_site = max(n_periods),
+    .groups = "drop"
+  )
+
+# -----------------------------
+# 1) One-line study summary numbers
+# -----------------------------
+n_sites <- Daily %>% distinct(sitename) %>% nrow()
+n_sites
+ Daily %>% nrow()
+ summary(Daily)
+ 
+n_site_years <- Daily %>% distinct(sitename, Year) %>% nrow()
+n_site_years
+
+# unique drought periods (clusters)
+n_drought_periods <- Daily %>%
+  filter(!is.na(Cluster)) %>%
+  distinct(sitename, Cluster) %>%
+  nrow()
+n_drought_periods
+
+
+cat(
+  n_sites, "US flux tower sites were selected, covering",
+  n_drought_periods, "unique drought periods across",
+  n_site_years, "site-years.\n"
+)
+
+# -----------------------------
+# 2) How many SITES per drought_cat / AI_cat / Veg
+# (counts unique sites that appear in each category at least once)
+# -----------------------------
+sites_per_drought_cat <- Daily %>%
+  filter(!is.na(drought_cat)) %>%
+  distinct(sitename, drought_cat) %>%
+  count(drought_cat, name = "n_sites") %>%
+  arrange(desc(n_sites))
+sites_per_drought_cat
+
+periods_per_cat <- Daily %>%
+  filter(drought_cat %in% c("LS","MS"), !is.na(Cluster)) %>%
+  distinct(sitename, Cluster, drought_cat) %>%   # one row per drought period
+  count(drought_cat, name = "n_periods") %>%
+  arrange(desc(n_periods))
+periods_per_cat
+
+
+periods_per_cat <- Daily %>%
+  filter(drought_cat %in% c("LS","MS"), !is.na(Cluster)) %>%
+  distinct(sitename, Cluster, drought_cat) %>%   # one row per drought period
+  count(drought_cat, name = "n_periods") %>%
+  arrange(desc(n_periods))
+periods_per_cat
+
+
+sites_per_AI_cat <- Daily %>%
+  filter(!is.na(AI_cat)) %>%
+  distinct(sitename, AI_cat) %>%
+  count(AI_cat, name = "n_sites") %>%
+  arrange(desc(n_sites))
+sites_per_AI_cat
+
+sites_per_Veg <- Daily %>%
+  filter(!is.na(Veg)) %>%
+  distinct(sitename, Veg) %>%
+  count(Veg, name = "n_sites") %>%
+  arrange(desc(n_sites))
+sites_per_Veg
+
+# -----------------------------
+# 3) "Separating drought_cat to the other categories"
+# = how many UNIQUE sites per (AI_cat × drought_cat), (Veg × drought_cat)
+# -----------------------------
+sites_by_AIcat_droughtcat <- Daily %>%
+  filter(!is.na(AI_cat), !is.na(drought_cat)) %>%
+  distinct(sitename, AI_cat, drought_cat) %>%
+  count(AI_cat, drought_cat, name = "n_sites") %>%
+  arrange(AI_cat, drought_cat)
+sites_by_AIcat_droughtcat
+
+
+sites_by_Veg_droughtcat <- Daily %>%
+  filter(!is.na(Veg), !is.na(drought_cat)) %>%
+  distinct(sitename, Veg, drought_cat) %>%
+  count(Veg, drought_cat, name = "n_sites") %>%
+  arrange(Veg, drought_cat)
+sites_by_Veg_droughtcat
+
+```
+
+\newpage
+```{r table_1, echo=FALSE}
+#This is the code to create Table 1
+#IMPORTANT: update "E:/Github/diurnal-divergence-factor/" to your own filepath on line 263
+
+#Table 1. 
+#Summary of site-level metadata, DOI, and citation information for the datasets used in this study. 
+#Abbreviations are as follows: lat, latitude; long, longitude; veg, vegetation; and AI, aridity index. 
+#Mean aridity index methods are described in Section 2.3.1.
+
+library(dplyr)
+library(readr)
+
+#daily_path <- "E:/Github/diurnal-divergence-factor/data/Masterfile.csv"
+Daily <- readr::read_csv(daily_path, show_col_types = FALSE)
+
+first_non_na <- function(x) {
+  x <- x[!is.na(x)]
+  if (length(x) == 0) NA else x[1]
+}
+
+tower_details <- Daily %>%
+  dplyr::select(
+    sitename,
+    Latitude,
+    Longitude,
+    Veg,
+    mean_AI,
+    AI_cat,
+    Terrain,
+    data_source
+  ) %>%
+  distinct() %>%
+  group_by(sitename) %>%
+  dplyr::summarise(
+    Latitude    = first_non_na(Latitude),
+    Longitude   = first_non_na(Longitude),
+    Veg         = first_non_na(Veg),
+    mean_AI     = first_non_na(mean_AI),
+    AI_cat      = first_non_na(AI_cat),
+    Terrain     = first_non_na(Terrain),
+    data_source = first_non_na(data_source),
+    .groups = "drop"
+  ) %>%
+  arrange(sitename)
+
+tower_details
+
+readr::write_csv(tower_details, "E:/Github/diurnal-divergence-factor/tables/table_1.csv")
+```
+
+
+\newpage
+# The Tables1 Section
+This runs ANOVA, t-test, and description statistics, generate the information shown within the results, captions, and for tables 2, 3, 4, and S2:
+
+# Table 2
+## Descriptive statistics for DDF (hours) during drought and ND periods. Welch’s t-test: t(17109.79) = -9.02, p < 0.001; [mean] = 0.21 h, ~13 min
+filename: desc_Drought_DDF.csv; ttest_DDF.csv
+
+# Table 3
+## Descriptive statistics for DDF (hours) for each drought severity category (ND, LS, MS)
+filename: desc_drought_cat_DDF.csv 
+
+# Table 4
+## Descriptive statistics for DDF (hours) for each aridity category comparing each drought category (e.g., ND, drought)
+filename: desc_AI_cat_DDF.csv 
+
+# Table S2. 
+## Summary statistical results for each vegetation (Veg) category
+filename: desc_Veg_DDF.csv 
+
+```{r Tables1, echo=FALSE, results="asis"}
+
+y_var <- "DDF" 
+Daily[[y_var]] <- suppressWarnings(as.numeric(Daily[[y_var]]))
+
+# =========================
+# 1) Helpers
+# =========================
+ttest_vs_ref_within <- function(dat, row_var, group_var, y_var, ref_level = "ND") {
+
+  dat2 <- dat %>%
+    dplyr::filter(!is.na(.data[[row_var]]), !is.na(.data[[group_var]]), !is.na(.data[[y_var]])) %>%
+    dplyr::mutate(
+      .row = as.factor(.data[[row_var]]),
+      .grp = as.factor(.data[[group_var]]),
+      .y   = as.numeric(.data[[y_var]])
+    )
+
+  out <- dat2 %>%
+    dplyr::group_by(.row) %>%
+    dplyr::group_modify(~{
+      d <- .x
+
+      # nothing to compare if ref is missing
+      if (!(ref_level %in% levels(d$.grp))) {
+        return(tibble::tibble())
+      }
+
+      comps <- setdiff(levels(d$.grp), ref_level)
+      if (length(comps) == 0) return(tibble::tibble())
+
+      res <- lapply(comps, function(cmp) {
+        dd <- d %>% dplyr::filter(.grp %in% c(ref_level, cmp))
+
+        x0 <- dd$.y[dd$.grp == ref_level]
+        x1 <- dd$.y[dd$.grp == cmp]
+
+        # require at least 2 obs per group for a t-test
+        if (length(x0) < 2 || length(x1) < 2) {
+          return(tibble::tibble(
+            drought_cat = cmp,
+            t = NA_real_, df = NA_real_, p = NA_real_,
+            med_diff = stats::median(x1, na.rm = TRUE) - stats::median(x0, na.rm = TRUE)
+          ))
+        }
+
+        tt <- tryCatch(stats::t.test(.y ~ .grp, data = dd), error = function(e) NULL)
+
+        tibble::tibble(
+          drought_cat = cmp,
+          t  = if (!is.null(tt)) unname(tt$statistic) else NA_real_,
+          df = if (!is.null(tt)) unname(tt$parameter) else NA_real_,
+          p  = if (!is.null(tt)) unname(tt$p.value) else NA_real_,
+          med_diff = stats::median(x1, na.rm = TRUE) - stats::median(x0, na.rm = TRUE)
+        )
+      })
+
+      dplyr::bind_rows(res)
+    }) %>%
+    dplyr::ungroup() %>%
+    dplyr::mutate(
+      p_adj = p,  # NO adjustment
+      sig   = vapply(p, p_to_stars, character(1)),
+      baseline = ref_level
+    ) %>%
+    dplyr::rename(!!row_var := .row)
+
+  out
+}
+
+
+detect_site_var <- function(dat, candidates = c("sitename","site","SITE_ID","Site","site_id")) {
+  hit <- candidates[candidates %in% names(dat)][1]
+  if (length(hit) == 0 || is.na(hit)) stop("No site id column found. Add a site_var manually.")
+  hit
+}
+site_var <- detect_site_var(Daily)
+
+mean_ci_t <- function(x, conf = 0.95) {
+  x <- x[is.finite(x)]
+  n <- length(x)
+  if (n < 2) return(c(NA_real_, NA_real_))
+  m <- mean(x)
+  s <- stats::sd(x)
+  se <- s / sqrt(n)
+  alpha <- 1 - conf
+  tcrit <- stats::qt(1 - alpha/2, df = n - 1)
+  c(m - tcrit * se, m + tcrit * se)
+}
+
+omega_sq_oneway <- function(aov_obj) {
+  tab <- anova(aov_obj)
+  ss_between <- tab[1, "Sum Sq"]
+  df_between <- tab[1, "Df"]
+  ss_within  <- tab[nrow(tab), "Sum Sq"]
+  ms_within  <- tab[nrow(tab), "Mean Sq"]
+  ss_total   <- ss_between + ss_within
+  om <- (ss_between - df_between * ms_within) / (ss_total + ms_within)
+  max(0, as.numeric(om))
+}
+
+summarise_by_group <- function(dat, group_var, y_var, site_var, conf = 0.95) {
+  d <- dat %>%
+    dplyr::filter(!is.na(.data[[group_var]]), !is.na(.data[[y_var]])) %>%
+    dplyr::mutate(
+      .grp = as.factor(.data[[group_var]]),
+      .y   = as.numeric(.data[[y_var]])
+    )
+  
+  out <- d %>%
+  group_by(.grp) %>%
+  summarise(
+    sites_n = n_distinct(.data[[site_var]]),
+    n_obs   = sum(is.finite(.y)),
+    mean    = mean(.y, na.rm = TRUE),
+    sd      = sd(.y, na.rm = TRUE),
+    median  = median(.y, na.rm = TRUE),
+    ci_low  = mean_ci_t(.y, conf)[1],
+    ci_high = mean_ci_t(.y, conf)[2],
+    .groups = "drop"
+  ) %>%
+  rename(Group = .grp)
+
+ 
+  out
+}
+
+p_to_stars <- function(p) {
+  if (is.na(p)) return("ns")
+  if (p < 0.001) return("***")
+  if (p < 0.01)  return("**")
+  if (p < 0.05)  return("*")
+  "ns"
+}
+
+run_ttest <- function(dat, group_var, y_var) {
+  d <- dat %>%
+    dplyr::filter(!is.na(.data[[group_var]]), !is.na(.data[[y_var]])) %>%
+    dplyr::mutate(
+      .grp = as.factor(.data[[group_var]]),
+      .y   = as.numeric(.data[[y_var]])
+    )
+
+  levs <- levels(d$.grp)
+  if (length(levs) != 2) return(NULL)
+
+  x0 <- d$.y[d$.grp == levs[1]]
+  x1 <- d$.y[d$.grp == levs[2]]
+
+  tt <- tryCatch(stats::t.test(.y ~ .grp, data = d), error = function(e) NULL)
+
+  tibble::tibble(
+    test = "t-test",
+    t  = if (!is.null(tt)) unname(tt$statistic) else NA_real_,
+    df = if (!is.null(tt)) unname(tt$parameter) else NA_real_,
+    p  = if (!is.null(tt)) unname(tt$p.value) else NA_real_,
+    med_diff = median(x1, na.rm = TRUE) - median(x0, na.rm = TRUE),
+    baseline = levs[1], comparison = levs[2]
+  )
+}
+
+run_anova <- function(dat, group_var, y_var) {
+  d <- dat %>%
+    dplyr::filter(!is.na(.data[[group_var]]), !is.na(.data[[y_var]])) %>%
+    dplyr::mutate(
+      .grp = as.factor(.data[[group_var]]),
+      .y   = as.numeric(.data[[y_var]])
+    )
+
+  if (nlevels(d$.grp) < 3) return(NULL)
+
+  a <- stats::aov(.y ~ .grp, data = d)
+  tab <- anova(a)
+
+  tibble::tibble(
+    test = "ANOVA",
+    F   = as.numeric(tab[1, "F value"]),
+    df1 = as.numeric(tab[1, "Df"]),
+    df2 = as.numeric(tab[nrow(tab), "Df"]),
+    p   = as.numeric(tab[1, "Pr(>F)"]),
+    omega_sq = omega_sq_oneway(a)
+  )
+}
+
+add_tukey_letters_to_desc <- function(dat, group_var, y_var, desc_tbl) {
+  labs <- tukey_letters(dat, x = group_var, y = y_var)
+  names(labs)[names(labs) == group_var] <- "Group"
+  desc_tbl %>%
+    dplyr::left_join(labs, by = "Group") %>%
+    dplyr::rename(tukey = .label)
+}
+
+# =========================
+# 2) What to run
+# =========================
+group_map <- tibble::tibble(
+  group_var = c("Drought", "drought_cat", "Veg", "AI_cat"),
+  Category  = c("Drought (Drought vs ND)", "Drought severity", "Vegetation type", "Aridity class")
+) %>%
+  dplyr::filter(group_var %in% names(Daily))
+
+# =========================
+# 3) Descriptive tables
+# =========================
+desc_tables <- list()
+
+for (i in seq_len(nrow(group_map))) {
+  gv <- group_map$group_var[i]
+  catlab <- group_map$Category[i]
+
+  desc <- summarise_by_group(Daily, gv, y_var, site_var, conf = 0.95) %>%
+    dplyr::mutate(Category = catlab) %>%
+    dplyr::select(Category, Group, sites_n, n_obs, mean, sd, median, ci_low, ci_high)
+
+  k <- dplyr::n_distinct(Daily[[gv]], na.rm = TRUE)
+  if (k >= 3) desc <- add_tukey_letters_to_desc(Daily, gv, y_var, desc)
+
+  desc_tables[[gv]] <- desc
+}
+
+# =========================
+# 4) Test tables (t-test or ANOVA)
+# =========================
+test_rows <- list()
+
+for (i in seq_len(nrow(group_map))) {
+  gv <- group_map$group_var[i]
+  catlab <- group_map$Category[i]
+  k <- dplyr::n_distinct(Daily[[gv]], na.rm = TRUE)
+
+  if (k == 2) {
+    test_rows[[gv]] <- run_ttest(Daily, gv, y_var) %>%
+      dplyr::mutate(Category = catlab, group_var = gv)
+  } else if (k >= 3) {
+    test_rows[[gv]] <- run_anova(Daily, gv, y_var) %>%
+      dplyr::mutate(Category = catlab, group_var = gv)
+  }
+}
+
+tests <- dplyr::bind_rows(test_rows)
+
+if (nrow(tests) > 0) {
+tests <- tests %>%
+  dplyr::mutate(sig = vapply(p, p_to_stars, character(1)))
+}
+
+ttest_table <- tests %>%
+  dplyr::filter(test == "t-test") %>%
+  dplyr::select(Category, group_var, test, t, df, p, sig, baseline, comparison, med_diff)
+ttest_table
+
+anova_table <- tests %>%
+  dplyr::filter(test == "ANOVA") %>%
+  dplyr::select(Category, group_var, test, F, df1, df2, p, sig, omega_sq)
+anova_table
+
+# =========================
+# 5) Print tables
+# =========================
+for (nm in names(desc_tables)) {
+  cap <- paste0("Descriptive stats by ", nm, " (response = ", y_var, "). CI = 95% t-based CI of the mean.")
+  print(knitr::kable(desc_tables[[nm]], digits = 3, caption = cap, booktabs = TRUE))
+  cat("\n\n")
+}
+
+if (nrow(ttest_table) > 0) {
+  print(knitr::kable(ttest_table, digits = 4, caption = "t-tests", booktabs = TRUE))
+  cat("\n\n")
+}
+
+if (nrow(anova_table) > 0) {
+  print(knitr::kable(anova_table, digits = 4, caption = "ANOVAs + omega squared", booktabs = TRUE))
+  cat("\n\n")
+}
+
+
+# =========================
+# 6) Write CSVs
+# =========================
+# Descriptives
+for (nm in names(desc_tables)) {
+  readr::write_csv(desc_tables[[nm]], file.path(output_dir, paste0("desc_", nm, "_", y_var, ".csv")))
+}
+# Tests
+if (nrow(ttest_table) > 0) readr::write_csv(ttest_table, file.path(output_dir, paste0("ttest_", y_var, ".csv")))
+if (nrow(anova_table) > 0) readr::write_csv(anova_table, file.path(output_dir, paste0("anova_", y_var, ".csv")))
+```
+
+\newpage
+# The Tables2 Section
+Drought severity - this runs ANOVA, t-test, and description statistics, generate the information shown within the results, captions, and for tables 4, 5, S3, and S4:
+
+
+# Table 4. 
+## Descriptive statistics for DDF (hours) for each aridity category comparing each drought category (e.g., ND, drought)
+filename: desc_AI_cat_x_drought_DDF.csv
+
+# Table 5. 
+## Descriptive statistics for DDF (hours) for each aridity category comparing each drought severity category
+filename: desc_AI_cat_x_drought_cat_DDF.csv
+
+# Table S3. 
+## Summary statistic results for each vegetation (Veg) type under non-drought (ND) and drought conditions
+filename: desc_Veg_x_drought_DDF.csv
+
+# Table S4. 
+## Summary statistic results for each vegetation (Veg) type under non-drought (ND), less severe (LS) drought, and more severe (MS) drought conditions
+filename: desc_Veg_x_drought_cat_DDF.csv
+
+```{r Tables2, echo=FALSE, results="asis"}
+y_var <- "DDF"  
+
+Daily[[y_var]] <- suppressWarnings(as.numeric(Daily[[y_var]]))
+
+if ("Drought" %in% names(Daily)) {
+  Daily <- Daily %>% mutate(Drought = factor(Drought, levels = c("ND","Drought")))
+}
+
+# -------------------------
+# HELPERS
+# -------------------------
+run_tukey_within <- function(dat, row_var, group_var, y_var) {
+  dat %>%
+    dplyr::filter(!is.na(.data[[row_var]]), !is.na(.data[[group_var]]), !is.na(.data[[y_var]])) %>%
+    dplyr::mutate(
+      .row = as.factor(.data[[row_var]]),
+      .grp = as.factor(.data[[group_var]]),
+      .y   = as.numeric(.data[[y_var]])
+    ) %>%
+    dplyr::group_by(.row) %>%
+    dplyr::group_modify(~{
+      d <- .x
+
+      if (nlevels(d$.grp) < 3) {
+        return(tibble::tibble())
+      }
+
+      fit <- stats::aov(.y ~ .grp, data = d)
+      tk  <- stats::TukeyHSD(fit, which = ".grp")
+
+      as.data.frame(tk$.grp) %>%
+        tibble::rownames_to_column("comparison") %>%
+        tibble::as_tibble() %>%
+        dplyr::rename(p_adj = `p adj`) %>%
+        tidyr::separate(comparison, into = c("group1", "group2"), sep = "-", remove = FALSE)
+    }) %>%
+    dplyr::ungroup() %>%
+    dplyr::mutate(
+      sig = vapply(p_adj, p_to_stars, character(1))
+    ) %>%
+    dplyr::rename(!!row_var := .row)
+}
+
+detect_site_var <- function(dat, candidates = c("sitename","site","SITE_ID","Site","site_id")) {
+  hit <- candidates[candidates %in% names(dat)][1]
+  if (length(hit) == 0 || is.na(hit)) stop("No site id column found. Add a site_var manually.")
+  hit
+}
+site_var <- detect_site_var(Daily)
+
+mean_ci_t <- function(x, conf = 0.95) {
+  x <- x[is.finite(x)]
+  n <- length(x)
+  if (n < 2) return(c(NA_real_, NA_real_))
+  m <- mean(x); s <- sd(x); se <- s / sqrt(n)
+  tcrit <- qt(1 - (1-conf)/2, df = n - 1)
+  c(m - tcrit * se, m + tcrit * se)
+}
+
+omega_sq_oneway <- function(aov_obj) {
+  tab <- anova(aov_obj)
+  ss_between <- tab[1, "Sum Sq"]
+  df_between <- tab[1, "Df"]
+  ss_within  <- tab[nrow(tab), "Sum Sq"]
+  ms_within  <- tab[nrow(tab), "Mean Sq"]
+  ss_total   <- ss_between + ss_within
+  om <- (ss_between - df_between * ms_within) / (ss_total + ms_within)
+  max(0, as.numeric(om))
+}
+
+p_to_stars <- function(p) {
+  if (is.na(p)) return("ns")
+  if (p < 0.001) return("***")
+  if (p < 0.01)  return("**")
+  if (p < 0.05)  return("*")
+  "ns"
+}
+
+summarise_two_way <- function(dat, row_var, col_var, y_var, site_var, conf = 0.95) {
+  dat %>%
+    filter(!is.na(.data[[row_var]]), !is.na(.data[[col_var]]), !is.na(.data[[y_var]])) %>%
+    mutate(
+      .row = as.factor(.data[[row_var]]),
+      .col = as.factor(.data[[col_var]]),
+      .y   = as.numeric(.data[[y_var]])
+    ) %>%
+    group_by(.row, .col) %>%
+    summarise(
+      sites_n = n_distinct(.data[[site_var]]),
+      n_obs   = sum(is.finite(.y)),
+      mean    = mean(.y, na.rm = TRUE),
+      sd      = sd(.y, na.rm = TRUE),
+      median  = median(.y, na.rm = TRUE),
+      ci_low  = mean_ci_t(.y, conf)[1],
+      ci_high = mean_ci_t(.y, conf)[2],
+      .groups = "drop"
+    ) %>%
+    rename(!!row_var := .row, !!col_var := .col)
+}
+
+# run t-test within each stratum of row_var: compare drought (2 groups)
+ttest_within <- function(dat, row_var, group_var, y_var) {
+  dat %>%
+    filter(!is.na(.data[[row_var]]), !is.na(.data[[group_var]]), !is.na(.data[[y_var]])) %>%
+    mutate(
+      .row = as.factor(.data[[row_var]]),
+      .grp = as.factor(.data[[group_var]]),
+      .y   = as.numeric(.data[[y_var]])
+    ) %>%
+    group_by(.row) %>%
+    group_modify(~{
+      d <- .x
+      levs <- levels(d$.grp)
+      if (length(levs) != 2) {
+        return(tibble(t=NA_real_, df=NA_real_, p=NA_real_, med_diff=NA_real_, baseline=NA_character_, comparison=NA_character_))
+      }
+      x0 <- d$.y[d$.grp == levs[1]]
+      x1 <- d$.y[d$.grp == levs[2]]
+      if (length(x0) < 2 || length(x1) < 2) {
+        return(tibble(t=NA_real_, df=NA_real_, p=NA_real_,
+                      med_diff = median(x1, na.rm=TRUE) - median(x0, na.rm=TRUE),
+                      baseline=levs[1], comparison=levs[2]))
+      }
+      tt <- tryCatch(t.test(.y ~ .grp, data = d), error = function(e) NULL)
+      tibble(
+        t  = if (!is.null(tt)) unname(tt$statistic) else NA_real_,
+        df = if (!is.null(tt)) unname(tt$parameter) else NA_real_,
+        p  = if (!is.null(tt)) unname(tt$p.value) else NA_real_,
+        med_diff = median(x1, na.rm=TRUE) - median(x0, na.rm=TRUE),
+        baseline = levs[1], comparison = levs[2]
+      )
+    }) %>%
+    ungroup() %>%
+    dplyr::mutate(
+      p_adj = p,                 
+      sig   = vapply(p, p_to_stars, character(1))
+    ) %>%
+    dplyr::rename(!!row_var := .row)
+
+}
+
+# run one-way ANOVA within each stratum of row_var on group_var (3+ groups)
+anova_within <- function(dat, row_var, group_var, y_var) {
+  dat %>%
+    filter(!is.na(.data[[row_var]]), !is.na(.data[[group_var]]), !is.na(.data[[y_var]])) %>%
+    mutate(
+      .row = as.factor(.data[[row_var]]),
+      .grp = as.factor(.data[[group_var]]),
+      .y   = as.numeric(.data[[y_var]])
+    ) %>%
+    group_by(.row) %>%
+    group_modify(~{
+      d <- .x
+      if (nlevels(d$.grp) < 3) {
+        return(tibble(F=NA_real_, df1=NA_real_, df2=NA_real_, p=NA_real_, omega_sq=NA_real_))
+      }
+      a <- aov(.y ~ .grp, data = d)
+      tab <- anova(a)
+      tibble(
+        F   = as.numeric(tab[1, "F value"]),
+        df1 = as.numeric(tab[1, "Df"]),
+        df2 = as.numeric(tab[nrow(tab), "Df"]),
+        p   = as.numeric(tab[1, "Pr(>F)"]),
+        omega_sq = omega_sq_oneway(a)
+      )
+    }) %>%
+    ungroup() %>%
+    dplyr::mutate(
+      p_adj = p,                        # no adjustment
+      sig   = vapply(p, p_to_stars, character(1))
+    ) %>%
+    dplyr::rename(!!row_var := .row)
+
+}
+
+# -------------------------
+# 1) VEG × drought (ND vs Drought) + t-tests within Veg
+# -------------------------
+if (all(c("Veg","Drought") %in% names(Daily))) {
+  desc_veg_drought <- summarise_two_way(Daily, "Veg", "Drought", y_var, site_var) %>%
+    dplyr::mutate(Category = "Veg") %>%
+    dplyr::select(Category, Veg, Drought, sites_n, n_obs, mean, sd, median, ci_low, ci_high)
+  
+  tests_veg_drought <- ttest_within(Daily, "Veg", "Drought", y_var) %>%
+    dplyr::mutate(Category = "Veg") %>%
+    dplyr::select(Category, Veg, t, df, p, p_adj, sig, baseline, comparison, med_diff)
+  
+  desc_veg_droughtcat <- summarise_two_way(Daily, "Veg", "drought_cat", y_var, site_var) %>%
+    dplyr::mutate(Category = "Veg") %>%
+    dplyr::select(Category, Veg, drought_cat, sites_n, n_obs, mean, sd, median, ci_low, ci_high)
+  
+  tests_veg_droughtcat <- anova_within(Daily, "Veg", "drought_cat", y_var) %>%
+    dplyr::mutate(Category = "Veg") %>%
+    dplyr::select(Category, Veg, F, df1, df2, p, p_adj, sig, omega_sq)
+  
+  print(knitr::kable(desc_veg_drought, digits = 3, booktabs = TRUE,
+                     caption = paste0("Veg × drought (response=", y_var, "); CI = 95% t-based CI of mean")))
+  cat("\n\n")
+  print(knitr::kable(tests_veg_drought, digits = 4, booktabs = TRUE,
+                     caption = "t-tests (within each Veg): ND vs Drought (no p adjustment)"))
+  cat("\n\n")
+
+  readr::write_csv(desc_veg_drought, file.path(output_dir, paste0("desc_Veg_x_drought_", y_var, ".csv")))
+  readr::write_csv(tests_veg_drought, file.path(output_dir, paste0("ttest_within_Veg_drought_", y_var, ".csv")))
+}
+
+# -------------------------
+# 2) VEG × drought_cat (ND/LS/MS...) + ANOVAs within Veg
+# -------------------------
+if (all(c("Veg","drought_cat") %in% names(Daily))) {
+  desc_veg_droughtcat <- summarise_two_way(Daily, "Veg", "drought_cat", y_var, site_var) %>%
+    mutate(Category = "Veg") %>%
+    dplyr::select(Category, Veg, drought_cat, sites_n, n_obs, mean, sd, median, ci_low, ci_high)
+
+  tests_veg_droughtcat <- anova_within(Daily, "Veg", "drought_cat", y_var) %>%
+    mutate(Category = "Veg") %>%
+    select(Category, Veg, F, df1, df2, p, sig, omega_sq)
+
+  print(knitr::kable(desc_veg_droughtcat, digits = 3, booktabs = TRUE,
+                     caption = paste0("Veg × drought_cat (response=", y_var, "); CI = 95% t-based CI of mean")))
+  cat("\n\n")
+  print(knitr::kable(tests_veg_droughtcat, digits = 4, booktabs = TRUE,
+                     caption = "ANOVAs (within each Veg): drought_cat (no p adjustment)"))
+  cat("\n\n")
+
+  readr::write_csv(desc_veg_droughtcat, file.path(output_dir, paste0("desc_Veg_x_drought_cat_", y_var, ".csv")))
+  readr::write_csv(tests_veg_droughtcat, file.path(output_dir, paste0("anova_within_Veg_drought_cat_", y_var, ".csv")))
+}
+
+
+if (all(c("Veg", "drought_cat") %in% names(Daily))) {
+
+  tests_veg_droughtcat_pairwise <- ttest_vs_ref_within(
+    Daily, row_var = "Veg", group_var = "drought_cat", y_var = y_var, ref_level = "ND"
+  ) %>%
+    dplyr::mutate(Category = "Veg") %>%
+    dplyr::select(Category, Veg, drought_cat, t, df, p, p_adj, sig, baseline, med_diff)
+
+  print(knitr::kable(
+    tests_veg_droughtcat_pairwise, digits = 4, booktabs = TRUE,
+    caption = "Pairwise t-tests within each Veg: drought_cat vs ND (no p adjustment)"
+  ))
+  cat("\n\n")
+
+  readr::write_csv(
+    tests_veg_droughtcat_pairwise,
+    file.path(output_dir, paste0("ttest_within_Veg_drought_cat_vs_ND_", y_var, ".csv"))
+  )
+}
+
+if (all(c("AI_cat", "drought_cat") %in% names(Daily))) {
+
+  tests_ai_droughtcat_pairwise <- ttest_vs_ref_within(
+    Daily, row_var = "AI_cat", group_var = "drought_cat", y_var = y_var, ref_level = "ND"
+  ) %>%
+    dplyr::mutate(Category = "AI_cat") %>%
+    dplyr::select(Category, AI_cat, drought_cat, t, df, p, p_adj, sig, baseline, med_diff)
+
+  print(knitr::kable(
+    tests_ai_droughtcat_pairwise, digits = 4, booktabs = TRUE,
+    caption = "Pairwise t-tests within each AI_cat: drought_cat vs ND (no p adjustment)"
+  ))
+  cat("\n\n")
+
+  readr::write_csv(
+    tests_ai_droughtcat_pairwise,
+    file.path(output_dir, paste0("ttest_within_AI_cat_drought_cat_vs_ND_", y_var, ".csv"))
+  )
+}
+
+if (all(c("Veg", "drought_cat") %in% names(Daily))) {
+
+  Daily <- Daily %>%
+    dplyr::mutate(
+      Veg = factor(Veg),
+      drought_cat = factor(drought_cat, levels = c("ND", "LS", "MS"))
+    )
+
+  tests_veg_droughtcat_tukey <- run_tukey_within(
+    Daily,
+    row_var = "Veg",
+    group_var = "drought_cat",
+    y_var = y_var
+  ) %>%
+    dplyr::mutate(Category = "Veg") %>%
+    dplyr::select(Category, Veg, comparison, group1, group2, diff, lwr, upr, p_adj, sig)
+
+  print(knitr::kable(
+    tests_veg_droughtcat_tukey,
+    digits = 4,
+    booktabs = TRUE,
+    caption = "Tukey HSD pairwise comparisons within each Veg: drought_cat"
+  ))
+  cat("\n\n")
+
+  readr::write_csv(
+    tests_veg_droughtcat_tukey,
+    file.path(output_dir, paste0("tukey_within_Veg_drought_cat_", y_var, ".csv"))
+  )
+}
+
+if (all(c("AI_cat", "drought_cat") %in% names(Daily))) {
+
+  Daily <- Daily %>%
+    dplyr::mutate(
+      AI_cat = factor(AI_cat),
+      drought_cat = factor(drought_cat, levels = c("ND", "LS", "MS"))
+    )
+
+  tests_ai_droughtcat_tukey <- run_tukey_within(
+    Daily,
+    row_var = "AI_cat",
+    group_var = "drought_cat",
+    y_var = y_var
+  ) %>%
+    dplyr::mutate(Category = "AI_cat") %>%
+    dplyr::select(Category, AI_cat, comparison, group1, group2, diff, lwr, upr, p_adj, sig)
+
+  print(knitr::kable(
+    tests_ai_droughtcat_tukey,
+    digits = 4,
+    booktabs = TRUE,
+    caption = "Tukey HSD pairwise comparisons within each AI_cat: drought_cat"
+  ))
+  cat("\n\n")
+
+  readr::write_csv(
+    tests_ai_droughtcat_tukey,
+    file.path(output_dir, paste0("tukey_within_AI_cat_drought_cat_", y_var, ".csv"))
+  )
+}
+
+# -------------------------
+# Repeat for AI_cat × drought / AI_cat × drought_cat
+# -------------------------
+if (all(c("AI_cat","Drought") %in% names(Daily))) {
+  desc_ai_drought <- summarise_two_way(Daily, "AI_cat", "Drought", y_var, site_var) %>%
+    mutate(Category = "AI_cat") %>%
+    select(Category, AI_cat, Drought, sites_n, n_obs, mean, sd, median, ci_low, ci_high)
+
+  tests_ai_drought <- ttest_within(Daily, "AI_cat", "Drought", y_var) %>%
+    mutate(Category = "AI_cat") %>%
+    select(Category, AI_cat, t, df, p, sig, baseline, comparison, med_diff)
+
+  print(knitr::kable(desc_ai_drought, digits = 3, booktabs = TRUE,
+                     caption = paste0("AI_cat × drought (response=", y_var, "); CI = 95% t-based CI of mean")))
+  cat("\n\n")
+  print(knitr::kable(tests_ai_drought, digits = 4, booktabs = TRUE,
+                     caption = "t-tests (within each AI_cat): ND vs Drought (no p adjustment)"))
+  cat("\n\n")
+
+  readr::write_csv(desc_ai_drought, file.path(output_dir, paste0("desc_AI_cat_x_drought_", y_var, ".csv")))
+  readr::write_csv(tests_ai_drought, file.path(output_dir, paste0("ttest_within_AI_cat_drought_", y_var, ".csv")))
+}
+
+if (all(c("AI_cat","drought_cat") %in% names(Daily))) {
+  desc_ai_droughtcat <- summarise_two_way(Daily, "AI_cat", "drought_cat", y_var, site_var) %>%
+    mutate(Category = "AI_cat") %>%
+    select(Category, AI_cat, drought_cat, sites_n, n_obs, mean, sd, median, ci_low, ci_high)
+
+  tests_ai_droughtcat <- anova_within(Daily, "AI_cat", "drought_cat", y_var) %>%
+    mutate(Category = "AI_cat") %>%
+    select(Category, AI_cat, F, df1, df2, p, sig, omega_sq)
+
+  print(knitr::kable(desc_ai_droughtcat, digits = 3, booktabs = TRUE,
+                     caption = paste0("AI_cat × drought_cat (response=", y_var, "); CI = 95% t-based CI of mean")))
+  cat("\n\n")
+  print(knitr::kable(tests_ai_droughtcat, digits = 4, booktabs = TRUE,
+                     caption = "ANOVAs (within each AI_cat): drought_cat (no p adjustment)"))
+  cat("\n\n")
+
+  readr::write_csv(desc_ai_droughtcat, file.path(output_dir, paste0("desc_AI_cat_x_drought_cat_", y_var, ".csv")))
+  readr::write_csv(tests_ai_droughtcat, file.path(output_dir, paste0("anova_within_AI_cat_drought_cat_", y_var, ".csv")))
+}
+```
+

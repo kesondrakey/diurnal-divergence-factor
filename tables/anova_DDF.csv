@@ -1,0 +1,3 @@
+Category,group_var,test,F,df1,df2,p,sig,omega_sq
+Drought severity,drought_cat,ANOVA,116.96201920227793,2,49641,2.1054701452305178e-51,***,0.004650019881856703
+Vegetation type,Veg,ANOVA,574.7900772549458,3,49640,0,***,0.03351227147780444

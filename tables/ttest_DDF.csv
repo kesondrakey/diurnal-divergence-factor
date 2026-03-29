@@ -1,0 +1,3 @@
+Category,group_var,test,t,df,p,sig,baseline,comparison,med_diff
+Drought (Drought vs ND),Drought,t-test,-9.018661935700464,17109.794721389593,2.1015527622782583e-19,***,Drought,ND,0.5
+Aridity class,AI_cat,t-test,-34.994591436920174,46984.05687864477,7.023148656271766e-265,***,Arid,Humid,0.5
