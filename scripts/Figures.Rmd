@@ -1,0 +1,2454 @@
+---
+title: "Figures_2026_V3"
+author: "Kesondra"
+date: "2026-03-10"
+output: 
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+packages <- c(
+  "dplyr", "tidyr", "ggplot2", "ggdist",
+  "lubridate", "reshape2", "naniar", "BBmisc",
+  "ggrepel", "gghighlight", "ggtext",
+  "gridExtra", "multcomp", "multcompView",
+  "readr", "stringr", "tinytex", "knitr"
+)
+
+to_install <- packages[!packages %in% installed.packages()[, "Package"]]
+
+if (length(to_install) > 0) {
+  install.packages(to_install)
+}
+
+invisible(lapply(packages, library, character.only = TRUE))
+
+# Libraries
+library(dplyr); library(tidyr); library(ggplot2); library(ggdist)
+library(lubridate); library(reshape2); library(naniar); library(BBmisc)
+library(ggrepel); library(gghighlight); library(ggtext)
+library(gridExtra); library(grid); library(multcomp); library(multcompView)
+library(readr); library(stringr); library(tinytex); library(knitr)
+
+daily_path <- "E:/Github/diurnal-divergence-factor/data/Masterfile.csv"
+
+
+Daily <- readr::read_csv(daily_path, show_col_types = FALSE)
+
+# Basic hygiene (only type + factor levels; no value edits)
+Daily <- Daily %>%
+  mutate(
+    Date = as.Date(Date),
+    Drought = factor(
+      dplyr::coalesce(Drought, ifelse(!is.na(Cluster) & Cluster > 0, "Drought", "ND")),
+      levels = c("ND","Drought")
+    ),
+    drought_cat = factor(dplyr::coalesce(drought_cat, "ND"),
+                         levels = c("ND","LS","MS")),
+    AI_cat = factor(AI_cat,
+                    levels = c("Humid","Semi-Arid","Arid"),
+                    ordered = TRUE),
+    Veg = factor(Veg, levels = c("DBF","ENF","SHR","GRA"))
+  )
+
+# Map p-values to stars
+p_to_stars <- function(p) {
+  if (is.na(p)) return("ns")
+  if (p < 0.001) return("***")
+  if (p < 0.01)  return("**")
+  if (p < 0.05)  return("*")
+  "ns"
+}
+
+# Tukey letters (for 3+ groups) per data.frame
+tukey_letters <- function(dat, x, y) {
+  dat <- dat[!is.na(dat[[x]]) & !is.na(dat[[y]]), , drop = FALSE]
+  # group info
+  g    <- factor(dat[[x]])
+  levs <- levels(g)
+  k    <- nlevels(g)
+
+  make_tbl <- function(names_vec, labs_vec) {
+    tibble::tibble(!!rlang::sym(x) := names_vec, .label = labs_vec)
+  }
+
+  if (k < 1) {
+    return(make_tbl(character(0), character(0)))
+  }
+  if (k == 1) {
+    return(make_tbl(levs, NA_character_))
+  }
+  if (k == 2) {
+    p <- tryCatch(stats::t.test(dat[[y]] ~ g)$p.value, error = function(e) NA_real_)
+    labs <- if (is.na(p) || p >= 0.05) c("a","a") else c("a","b")
+    names(labs) <- levs
+    return(make_tbl(names(labs), unname(labs)))
+  }
+
+  a  <- stats::aov(stats::as.formula(paste(y, "~", x)), data = dat)
+  hs <- tryCatch(stats::TukeyHSD(a)[[1]][, "p adj"], error = function(e) NULL)
+
+  if (is.null(hs)) {
+    labs_full <- setNames(rep("a", k), levs)
+  } else {
+    tuk <- multcompView::multcompLetters(hs)$Letters   # named char vector
+    labs_full <- setNames(rep("a", k), levs)
+    common <- intersect(names(tuk), names(labs_full))
+    labs_full[common] <- tuk[common]
+  }
+
+  make_tbl(names(labs_full), unname(labs_full))
+}
+
+theme_ddf_facet <- theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.line = element_line(linewidth = 0.8, color = "black"),
+    axis.text.x = element_text(size = 16, face = "bold", color = "black"),
+    axis.text.y = element_text(size = 16, face = "bold", color = "black"),
+    axis.title.x = element_text(size = 16, face = "bold", color = "black"),
+    axis.title.y = element_text(size = 16, face = "bold", color = "black"),
+    axis.ticks = element_line(color = "black", linewidth = 0.8),
+    axis.text = element_text(size = 14, face = "bold", color = "black"),
+    axis.title = element_text(size = 13, face = "bold", color = "black"),
+    strip.text = element_text(size = 12, face = "bold", color = "black"),
+    panel.grid.major.x = element_line(linewidth = 0.4, color = "grey90"),
+    panel.grid.minor.x = element_line(linewidth = 0.3, color = "grey95"),
+    plot.title = element_text(size = 15, face = "bold", hjust = 0.5)
+  )
+
+# Figure output dir
+output_dir <- "E:/Github/diurnal-divergence-factor/plots"
+
+```
+
+## Figure x. Relative ET VPD plot
+```{r Fig2_RelativeETVPDplot, fig.cap= "Figure x. The ET-VPD relationship is illustrated above, where maximum ET (blue) and maximum VPD (red) has been converted to relative values from 0 to 1 throughout the course of the day and averaged for their respective periods. On the left is a non-drought period (May 5-June 30, 2016), where typical coupling of ET and VPD can be seen. On the right is a drought period (May 5-June 30, 2013), where the timing of ET and VPD become decoupled. Data for these plots are sourced from a woody savanna eddy covariance site in Arizona (US-SRS)"}
+
+knitr::opts_chunk$set(
+  echo = FALSE,      # Hide code
+  warning = FALSE,   # Hide warnings
+  message = FALSE    # Optional: hide package loading messages
+)
+# US-SRS (Arid&Hyperarid  WOO) -  Cluster #9 (LS)
+#Drought of interest:  US-SRS    
+#Drought May 5 to June 30 2013
+#ND Year: 2016\
+SRSfile <- read.csv("//ewa-fluxfp1/fluxtower/Ameriflux_Data/Update_08_2025/Step4_Fluxnet_Data/Step2_output_Fluxnet_w_P_Daymet/US-SRS.csv")
+
+#Variables of interest:
+SRSfile$datetime <- SRSfile$DateTime
+SRSfile$LE <- SRSfile$LE_f
+SRSfile$NETRAD <- SRSfile$NETRAD
+SRSfile$VPD_PI <- SRSfile$VPD_f
+
+SRSDR <- SRSfile %>%
+  dplyr::filter(datetime >= "2013-05-05 00:00:00" & datetime < "2013-06-30 00:00:00")%>%
+  mutate(yday = yday(datetime)) %>%
+  #mutate(hour = hour(datetime)) %>%
+  dplyr::select(datetime, Hour, yday, LE, NETRAD, VPD_PI) %>%
+  replace_with_na_all(condition = ~.x == -9999) %>%
+  dplyr::rename("ET" = LE) %>%
+  dplyr::rename("Q" = NETRAD) %>%
+  dplyr::rename("D" = VPD_PI) %>%
+  dplyr::filter(Hour > 7 & Hour < 19) %>%
+  group_by(Hour) %>%
+  summarise_if(is.numeric, mean, na.rm = TRUE) %>%
+  mutate(ET = normalize(ET, method = "range", range = c(0, 1))) %>%
+  mutate(Q = normalize(Q, method = "range", range = c(0, 1))) %>%
+  mutate(D = normalize(D, method = "range", range = c(0, 1))) %>%
+  dplyr::select(-Q) %>%
+  melt(., id.vars = c("yday", "Hour")) %>%
+  ggplot(aes(x = Hour, y = value, group = variable, colour = variable)) +
+  geom_smooth(size = 2, span = 0.4, se = FALSE) +
+  scale_color_manual(values = c("#42B2EB", "#EB7B42")) +
+  xlab("Hour") +
+  scale_x_continuous(breaks = c(8, 12, 16), labels = c("8 AM", "12 PM", "4 PM")) +
+  scale_y_continuous(breaks = c(0, 1), labels = c("0", "1")) +
+  theme_bw() +
+  labs(y = "<span style='font-size:14pt;font-weight:bold;color:black'>Relative </span><span style='font-size:14pt;font-weight:bold;color:#42B2EB'>ET</span><span style='font-size:14pt;font-weight:bold;color:black'> and </span><span style='font-size:14pt;font-weight:bold;color:#EB7B42'>VPD</span>",
+       y.subtitle = "Relative",
+       title = "US-SRS LS Drought \n9/22/2019 to 10/5/2019") +
+  theme(axis.title.y = element_markdown(),
+        axis.text = element_text(size = 14, face = "bold"),
+        axis.title.x = element_text(size = 14, face = "bold"),
+        legend.position = "none",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) +
+  geom_vline(data = . %>% filter(variable == "ET") %>% slice(which.max(value)),
+             aes(xintercept = Hour), linetype = "dashed", color = "#42B2EB", size = 1) +
+  geom_vline(data = . %>% filter(variable == "D") %>% slice(which.max(value)),
+             aes(xintercept = Hour), linetype = "dashed", color = "#EB7B42", size = 1)
+
+
+#ND Years of interest: 2002, 2013, 2016, 2017, 2020, 2021
+SRSGR <- SRSfile %>%
+  dplyr::filter(datetime >= "2016-05-05 00:00:00" & datetime < "2016-06-30 00:00:00")%>%
+  mutate(yday = yday(datetime)) %>%
+  #mutate(hour = hour(datetime)) %>%
+  dplyr::select(datetime, Hour, yday, LE, NETRAD, VPD_PI) %>%
+  replace_with_na_all(condition = ~.x == -9999) %>%
+  dplyr::rename("ET" = LE) %>%
+  dplyr::rename("Q" = NETRAD) %>%
+  dplyr::rename("D" = VPD_PI) %>%
+  dplyr::filter(Hour > 7 & Hour < 19) %>%
+  group_by(Hour) %>%
+  summarise_if(is.numeric, mean, na.rm = TRUE) %>%
+  mutate(ET = normalize(ET, method = "range", range = c(0, 1))) %>%
+  mutate(Q = normalize(Q, method = "range", range = c(0, 1))) %>%
+  mutate(D = normalize(D, method = "range", range = c(0, 1))) %>%
+  dplyr::select(-Q) %>%
+  melt(., id.vars = c("yday", "Hour")) %>%
+  ggplot(aes(x = Hour, y = value, group = variable, colour = variable)) +
+  geom_smooth(size = 2, span = 0.4, se = FALSE) +
+  scale_color_manual(values = c("#42B2EB", "#EB7B42")) +
+  xlab("Hour") +
+  scale_x_continuous(breaks = c(8, 12, 16), labels = c("8 AM", "12 PM", "4 PM")) +
+  scale_y_continuous(breaks = c(0, 1), labels = c("0", "1")) +
+  theme_bw() +
+  labs(y = "<span style='font-size:14pt;font-weight:bold;color:black'>Relative </span><span style='font-size:14pt;font-weight:bold;color:#42B2EB'>ET</span><span style='font-size:14pt;font-weight:bold;color:black'> and </span><span style='font-size:14pt;font-weight:bold;color:#EB7B42'>VPD</span>",
+       y.subtitle = "Relative",
+       title = "US-MOZ ND Year\n9/22/2010 to 10/5/2010") +
+  theme(axis.title.y = element_markdown(),
+        axis.text = element_text(size = 14, face = "bold"),
+        axis.title.x = element_text(size = 14, face = "bold"),
+        legend.position = "none",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) +
+  geom_vline(data = . %>% filter(variable == "ET") %>% slice(which.max(value)),
+             aes(xintercept = Hour), linetype = "dashed", color = "#42B2EB", size = 1) +
+  geom_vline(data = . %>% filter(variable == "D") %>% slice(which.max(value)),
+             aes(xintercept = Hour), linetype = "dashed", color = "#EB7B42", size = 1)
+
+
+
+plot1 <- SRSDR #Drought
+plot2 <- SRSGR #Non-Drought
+
+
+# Create titles for each plot
+title1 <- "Drought Period\n5/5/2013 to 6/30/2013"
+title2 <- "Non-Drought Year\n5/5/2016 to 6/30/2016"
+overall_title <- "Site: US-SRS"
+
+# Define the theme with bold and centered titles
+title_theme <- theme(plot.title = element_text(face = "bold", hjust = 0.5))
+
+# Arrange the plots side by side
+grid.arrange(
+  plot2 + ggtitle(title2) + title_theme, 
+  plot1 + ggtitle(title1) + title_theme,
+  nrow = 1,
+  top = textGrob(overall_title, gp = gpar(fontsize = 16, fontface = "bold"))
+)
+
+#Save
+output_path <- file.path(output_dir, "US-SRS_Drought_vs_NonDrought.png")
+
+# Open a PNG device
+ggsave(output_path, width = 7, height = 4, dpi = 300, bg = "white", units = "in", 
+       plot = grid.arrange(
+         plot2 + ggtitle(title2) + title_theme, 
+         plot1 + ggtitle(title1) + title_theme,
+         nrow = 1,
+         top = textGrob(overall_title, gp = gpar(fontsize = 16, fontface = "bold"))
+       ))
+```
+
+## Figure x. Drought versus ND
+```{r Figx_Drought_Plot, fig.cap= "Figure x. Comparison of daily diurnal DDF during drought (red) and non-drought (cyan) periods for 58 pooled flux tower sites during the growing season (May 1st to October 31st), covering x to y. Half-eye densities show Gaussian kernel density estimates using an unbounded KDE (bandwidth = 0.40). Boxplots summarize the median and interquartile range, and white points indicate means; outlier points are not displayed. The gray dashed reference line indicates the median DDF for the non-drought (ND) group."}
+
+knitr::opts_chunk$set(
+  echo = FALSE,      # Hide code
+  warning = FALSE,   # Hide warnings
+  message = FALSE    # Optional: hide package loading messages
+)
+# Drought vs Non-Drought
+df <- Daily %>% filter(!is.na(Drought), !is.na(DDF)) %>%
+  mutate(Drought = factor(Drought, levels = c("ND","Drought"))) %>%
+  mutate(
+    # explicit x positions so ND can be offset cleanly
+    x_pos = as.numeric(Drought) + dplyr::case_when(
+      Drought == "ND"      ~ -0.2,
+      Drought == "Drought" ~  0.0
+    )
+  )
+
+bw_use <- 0.40
+dens   <- ggdist::density_unbounded(bandwidth = bw_use)
+
+# ND median reference line (computed from what you plot)
+nd_line <- df %>%
+  filter(Drought == "ND") %>%
+  summarise(nd_med = median(DDF, na.rm = TRUE))
+
+# t-test + stars
+ttest <- tryCatch(stats::t.test(DDF ~ Drought, data = df),
+                  error = function(e) list(p.value = NA_real_))
+
+sig_label <- dplyr::case_when(
+  ttest$p.value < 0.001 ~ "***",
+  ttest$p.value < 0.01  ~ "**",
+  ttest$p.value < 0.05  ~ "*",
+  TRUE                  ~ "ns"
+)
+
+# star position (give headroom)
+y_max <- max(df$DDF, na.rm = TRUE)
+span  <- diff(range(df$DDF, na.rm = TRUE))
+y_star <- y_max + 0.08 * span
+
+# put star between the two groups (midpoint of their x_pos)
+x_star <- mean(c(0.8, 2.0))  # (1-0.2) and (2+0.0) = 0.8 and 2.0
+
+droughtplot <- ggplot(df, aes(x = x_pos, y = DDF, fill = Drought, group = Drought)) +
+
+  # ND median line (appears vertical after coord_flip)
+  ggplot2::geom_hline(
+    data = nd_line,
+    aes(yintercept = nd_med),
+    linetype = "dashed",
+    color = "gray30",
+    linewidth = 0.8
+  ) +
+
+  ggdist::stat_halfeye(
+    data = ~subset(.x, Drought == "ND"),
+    density = dens, .width = 0, alpha = 0.5,
+    slab_color = "#17BEBB", slab_linewidth = 1.1
+  ) +
+  ggdist::stat_halfeye(
+    data = ~subset(.x, Drought == "Drought"),
+    density = dens, .width = 0, alpha = 0.5,
+    slab_color = "#E4572E", slab_linewidth = 1.1
+  ) +
+
+  geom_boxplot(width = 0.35, linewidth = 0.8, color = "black", outlier.shape = NA) +
+  stat_summary(fun = mean, geom = "point",
+               shape = 21, size = 2, color = "black", fill = "white", stroke = 0.8) +
+
+  # headroom for star + avoid clipping after flip
+  scale_y_continuous(
+    breaks = seq(-10, 10, by = 2)#,
+    #expand = ggplot2::expansion(mult = c(0.05, 0.20))
+  ) +
+
+  coord_flip(clip = "off") +
+  theme_ddf_facet +
+  #theme(plot.margin = margin(5.5, 3.5, 5.5, 5.5)) +
+
+  # align tick labels with the actual centers (ND is shifted left)
+  scale_x_continuous(
+    breaks = c(0.8, 2.0),
+    labels = c("ND","Drought")
+  ) +
+
+  scale_fill_manual(values = c("ND" = "#17BEBB", "Drought" = "#E4572E")) +
+
+  labs(
+    #title = "DDF by Drought Category",
+    y = "DDF (hours)", 
+    x = "",
+   # caption = paste0("Half-eye: unbounded Gaussian KDE (bw = ", bw_use, "). White dot: mean")
+  ) +
+
+  annotate("text", x = x_star, y = y_star, label = sig_label,
+           color = "black", size = 7, fontface = "bold")
+
+print(droughtplot)
+
+ggsave(file.path(output_dir, "DroughtvsND.png"),
+       droughtplot, width = 8, height = 2.5, dpi = 300, bg = "white", units = "in")
+```
+
+\newpage
+## Figure x. Drought Severity
+```{r Figx_DroughtSeverityPlots, fig.cap = "Figure X. Distribution of daily diurnal decoupling factor (DDF; hours) across non-drought (ND; blue), less-severe drought (LS; yellow), and more-severe drought (MS; red) days pooled across 58 flux tower sites for the growing season (May 1–October 31; x–y). Half-eye densities show Gaussian kernel density estimates (unbounded KDE; bandwidth = 0.40). Boxplots summarize the median and interquartile range, with white points indicating means; outlier points are not displayed. The gray dashed reference line indicates the ND median DDF. Letters refer to Tukey post hoc test; groups sharing a letter are not significantly different (α = 0.05)."}
+knitr::opts_chunk$set(
+  echo = FALSE,      # Hide code
+  warning = FALSE,   # Hide warnings
+  message = FALSE    # Optional: hide package loading messages
+)
+Daily$drought_cat <- factor(Daily$drought_cat, levels = c("ND","LS","MS"))
+dat3 <- Daily %>% filter(!is.na(drought_cat), !is.na(DDF))
+
+bw_use <- 0.40
+dens   <- ggdist::density_unbounded(bandwidth = bw_use)
+
+# explicit x positions (so everything aligns)
+dat3 <- dat3 %>%
+  mutate(
+    x_pos = as.numeric(drought_cat) + dplyr::case_when(
+      drought_cat == "ND" ~ 0.0,
+      drought_cat == "LS" ~ 0.2,
+      drought_cat == "MS" ~ 0.4
+    )
+  )
+
+# ND median reference line
+nd_line <- dat3 %>%
+  filter(drought_cat == "ND") %>%
+  summarise(nd_med = median(DDF, na.rm = TRUE))
+
+# Tukey letters + label positions (aligned to x_pos)
+letters_df <- tukey_letters(dat3, x = "drought_cat", y = "DDF")
+
+y_tops <- dat3 %>%
+  group_by(drought_cat) %>%
+  summarise(y_top = max(DDF, na.rm = TRUE), .groups = "drop")
+
+span <- diff(range(dat3$DDF, na.rm = TRUE))
+
+lvl <- c("ND","LS","MS")
+offs <- c("ND" = 0.0, "LS" = 0.2, "MS" = 0.4)
+
+lvl <- c("ND","LS","MS")
+offs <- c("ND" = 0.0, "LS" = 0.2, "MS" = 0.4)
+
+letters_plot <- y_tops %>%
+  mutate(drought_cat = as.character(drought_cat)) %>%
+  left_join(
+    letters_df %>% mutate(drought_cat = as.character(drought_cat)),
+    by = "drought_cat"
+  ) %>%
+  mutate(
+    idx   = as.numeric(factor(drought_cat, levels = lvl)),
+    x_pos = idx + offs[drought_cat],
+    y_lab = y_top + 0.06 * span
+  )
+
+
+droughtcats <- ggplot(dat3, aes(x = x_pos, y = DDF, fill = drought_cat, group = drought_cat)) +
+
+  # ND median line (will appear vertical after coord_flip)
+  ggplot2::geom_hline(
+    data = nd_line,
+    aes(yintercept = nd_med),
+    linetype = "dashed",
+    color = "gray30",
+    linewidth = 0.8
+  ) +
+
+  ggdist::stat_halfeye(
+    data = ~subset(.x, drought_cat == "ND"),
+    density = dens, .width = 0, alpha = 0.5,
+    slab_color = "#56B4E9", slab_linewidth = 1.1
+  ) +
+  ggdist::stat_halfeye(
+    data = ~subset(.x, drought_cat == "LS"),
+    density = dens, .width = 0, alpha = 0.5,
+    slab_color = "#E69F00", slab_linewidth = 1.1
+  ) +
+  ggdist::stat_halfeye(
+    data = ~subset(.x, drought_cat == "MS"),
+    density = dens, .width = 0, alpha = 0.5,
+    slab_color = "#D55E00", slab_linewidth = 1.1
+  ) +
+
+  geom_boxplot(width = 0.35, linewidth = 0.8, color = "black", outlier.shape = NA) +
+
+  stat_summary(fun = mean, geom = "point",
+               shape = 21, size = 2, color = "black", fill = "white", stroke = 0.8) +
+
+  # headroom for Tukey letters + avoid clipping after flip
+  scale_y_continuous(
+    breaks = seq(-10, 10, by = 2)#,
+    #expand = ggplot2::expansion(mult = c(0.05, 0.20))
+  ) +
+
+  coord_flip(clip = "off") +
+  theme_ddf_facet +
+
+  # align category labels to nudged centers
+  scale_x_continuous(
+    breaks = c(1.0, 2.2, 3.4),
+    labels = c("ND","LS","MS")
+  ) +
+
+  scale_fill_manual(values = c("ND"="#56B4E9","LS"="#E69F00","MS"="#D55E00")) +
+
+  labs(
+   # title = "DDF by Drought Severity",
+    y = "Daily DDF (hours)", x = "",
+    #caption = paste0("Half-eye: unbounded Gaussian KDE (bw = ", bw_use, "). White dot: mean")
+  ) +
+  
+
+  geom_text(
+    data = letters_plot,
+    inherit.aes = FALSE,
+    aes(x = x_pos, y = y_lab, label = .label),
+    fontface = "bold", size = 5, color = "black"
+  )
+
+print(droughtcats)
+
+ggsave(file.path(output_dir,"DroughtSev.png"),
+       droughtcats, width=8, height=3.5, dpi=300, bg="white", units="in")
+
+```
+
+\newpage
+## Vegetation plots
+```{r Figx_VegDroughtSev,  fig.cap= "Figure x. Comparison of DDF during drought and non-drought periods for 58 pooled flux tower sites during the growing season (May 1st to October 31st) categorized by Vegetation IGBP type. Vegetation types are as follows: grasslands (GRA), deciduous broadleaf forests (DBF), evergreen needleleaf forests (ENF), mixed forests (MF), closed shrublands (CSH), open shrublands (OSH), savannas (SAV), and woody savannas (WSA). Each boxplot illustrates the distribution of DDF values for non-drought (ND; cyan) and less severe drought (LS; yellow), and more severe drought (MS; red) periods. The dotted horizontal line at zero indicates a DDF where the timing of maximum ET and VPD are the same. The black horizontal line within each boxplot indicates the median DDF value. Statistical outliers not shown."}
+knitr::opts_chunk$set(
+  echo = FALSE,      # Hide code
+  warning = FALSE,   # Hide warnings
+  message = FALSE    # Optional: hide package loading messages
+)
+
+
+bw_use <- 0.40
+dens   <- ggdist::density_unbounded(bandwidth = bw_use)
+
+veg_df <- Daily %>%
+  filter(!is.na(Veg), !is.na(Drought), !is.na(DDF)) %>%
+  mutate(
+    Drought = factor(Drought, levels = c("ND","Drought")),
+    Veg     = factor(Veg, levels = c("DBF","ENF","GRA","SHR")),
+    x_pos   = as.numeric(Drought) + dplyr::case_when(
+      Drought == "ND"      ~ -0.2,
+      Drought == "Drought" ~  0.0
+    )
+  )
+
+# stars per facet + y position (use span so it’s robust)
+sig_veg <- veg_df %>%
+  group_by(Veg) %>%
+  summarise(
+    p = tryCatch(t.test(DDF ~ Drought)$p.value, error = function(e) NA_real_),
+    y_max = max(DDF, na.rm = TRUE),
+    span  = diff(range(DDF, na.rm = TRUE)),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    star  = vapply(p, p_to_stars, character(1)),
+    y_bar = y_max + 0.08 * span,
+    x_bar = mean(c(0.8, 2.0))  # midpoint of shifted centers
+  )
+
+# ND median line per facet (Veg)
+nd_line_veg <- veg_df %>%
+  filter(Drought == "ND") %>%
+  group_by(Veg) %>%
+  summarise(nd_med = median(DDF, na.rm = TRUE), .groups = "drop")
+
+VegDroughtPlot <- ggplot(veg_df, aes(x = x_pos, y = DDF, fill = Drought, group = Drought)) +
+
+  # ND median reference line (appears vertical after coord_flip)
+  ggplot2::geom_hline(
+    data = nd_line_veg,
+    aes(yintercept = nd_med),
+    linetype = "dashed",
+    color = "gray30",
+    linewidth = 0.8
+  ) +
+
+  ggdist::stat_halfeye(
+    data = ~subset(.x, Drought == "ND"),
+    density = dens, .width = 0, alpha = 0.5,
+    slab_color = "#17BEBB", slab_linewidth = 1.1
+  ) +
+  ggdist::stat_halfeye(
+    data = ~subset(.x, Drought == "Drought"),
+    density = dens, .width = 0, alpha = 0.5,
+    slab_color = "#E4572E", slab_linewidth = 1.1
+  ) +
+
+  geom_boxplot(width = 0.35, linewidth = 0.8, color = "black", outlier.shape = NA) +
+  stat_summary(fun = mean, geom = "point",
+               shape = 21, size = 2, color = "black", fill = "white", stroke = 0.8) +
+
+  # headroom for stars in each facet
+  scale_y_continuous(
+  breaks = seq(-10, 10, by = 2)#,
+  #expand = ggplot2::expansion(mult = c(0.05, 0.20))
+)+
+
+  #scale_y_continuous(expand = ggplot2::expansion(mult = c(0.05, 0.20)
+
+  coord_flip(clip = "off") +
+  theme_ddf_facet +
+  #theme(plot.margin = margin(5.5, 3.5, 5.5, 5.5)) +
+
+  # Align tick labels with shifted centers
+  scale_x_continuous(
+    breaks = c(0.8, 2.0),
+    labels = c("ND","Drought")
+  ) +
+
+  facet_wrap(~Veg, ncol = 2, nrow = 3) +
+  scale_fill_manual(values = c("ND" = "#17BEBB", "Drought" = "#E4572E")) +
+
+  labs(
+   # title = "DDF by Drought Category and Vegetation",
+    y = "Daily DDF (hours)", x = "",
+    #caption = paste0("Half-eye: unbounded Gaussian KDE (bw = ", bw_use, "). White dot: mean")
+  ) +
+
+  # Stars (per facet; won’t clip)
+  geom_text(
+    data = sig_veg,
+    inherit.aes = FALSE,
+    aes(x = x_bar, y = y_bar, label = star),
+    fontface = "bold", size = 5
+  )
+
+print(VegDroughtPlot)
+
+ggsave(file.path(output_dir,"Veg_Drought.png"),
+       VegDroughtPlot, width=10, height=6, dpi=300, bg="white", units="in")
+
+```
+
+
+```{r Figx_VegDrought, fig.cap= "Figure x. "}
+# ---- data ----
+v3 <- Daily %>%
+  filter(!is.na(Veg), !is.na(drought_cat), !is.na(DDF)) %>%
+  mutate(
+    drought_cat = factor(drought_cat, levels = c("ND","LS","MS")),
+    Veg = factor(Veg, levels = c("DBF","ENF","GRA","SHR")),
+    x_pos = as.numeric(drought_cat) + dplyr::case_when(
+      drought_cat == "ND" ~ 0.0,
+      drought_cat == "LS" ~ 0.2,
+      drought_cat == "MS" ~ 0.4
+    )
+  )
+
+# ND median per Veg facet
+nd_line_vegsev <- v3 %>%
+  filter(drought_cat == "ND") %>%
+  group_by(Veg) %>%
+  summarise(nd_med = median(DDF, na.rm = TRUE), .groups = "drop")
+
+# Tukey letters + positions per Veg facet (aligned to x_pos)
+letters_by_veg <- v3 %>%
+  group_by(Veg) %>%
+  group_modify(~{
+    labs <- tukey_letters(.x, x = "drought_cat", y = "DDF")
+    y_top <- .x %>%
+      group_by(drought_cat) %>%
+      summarise(y_top = max(DDF, na.rm = TRUE), .groups = "drop")
+
+    span <- diff(range(.x$DDF, na.rm = TRUE))
+
+    dplyr::left_join(labs, y_top, by = "drought_cat") %>%
+      mutate(
+        y_lab = y_top + 0.06 * span,
+        x_pos = as.numeric(factor(drought_cat, levels = c("ND","LS","MS"))) +
+          dplyr::case_when(
+            drought_cat == "ND" ~ 0.0,
+            drought_cat == "LS" ~ 0.2,
+            drought_cat == "MS" ~ 0.4
+          )
+      )
+  }) %>%
+  ungroup()
+
+VegSevCats <- ggplot(v3, aes(x = x_pos, y = DDF, fill = drought_cat, group = drought_cat)) +
+
+  # ND median reference line (appears vertical after coord_flip)
+  ggplot2::geom_hline(
+    data = nd_line_vegsev,
+    aes(yintercept = nd_med),
+    linetype = "dashed",
+    color = "gray30",
+    linewidth = 0.8
+  ) +
+
+  # Half-eyes (shared KDE)
+  ggdist::stat_halfeye(
+    data = ~subset(.x, drought_cat == "ND"),
+    density = dens, .width = 0, alpha = 0.5,
+    slab_color = "#56B4E9", slab_linewidth = 1.1
+  ) +
+  ggdist::stat_halfeye(
+    data = ~subset(.x, drought_cat == "LS"),
+    density = dens, .width = 0, alpha = 0.5,
+    slab_color = "#E69F00", slab_linewidth = 1.1
+  ) +
+  ggdist::stat_halfeye(
+    data = ~subset(.x, drought_cat == "MS"),
+    density = dens, .width = 0, alpha = 0.5,
+    slab_color = "#D55E00", slab_linewidth = 1.1
+  ) +
+
+  # Boxplots + means
+  geom_boxplot(width = 0.35, linewidth = 0.8, color = "black", outlier.shape = NA) +
+  stat_summary(fun = mean, geom = "point",
+               shape = 21, size = 2, color = "black", fill = "white", stroke = 0.8) +
+
+  # headroom for letters + prevent clipping after flip
+  scale_y_continuous(
+    breaks = seq(-10, 10, by = 2)#,
+    #expand = ggplot2::expansion(mult = c(0.05, 0.20)))+
+  #scale_y_continuous(expand = ggplot2::expansion(mult = c(0.05, 0.20)
+  ) +
+
+  coord_flip(clip = "off") +
+  theme_ddf_facet +
+  #theme(plot.margin = margin(5.5, 3.5, 5.5, 5.5)) +
+
+  # Align axis labels to nudged centers
+  scale_x_continuous(
+    breaks = c(1.0, 2.2, 3.4),
+    labels = c("ND","LS","MS")
+  ) +
+
+  scale_fill_manual(values = c("ND"="#56B4E9","LS"="#E69F00","MS"="#D55E00")) +
+  facet_wrap(~Veg, ncol = 2, nrow = 3) +
+
+  labs(
+    #title = "DDF by Drought Severity and Vegetation",
+    y = "Daily DDF (hours)", x = "",
+    #caption = paste0("Half-eye: unbounded Gaussian KDE (bw = ", bw_use, "). White dot: mean")
+  ) +
+
+  # Tukey letters (aligned!)
+  geom_text(
+    data = letters_by_veg,
+    inherit.aes = FALSE,
+    aes(x = x_pos, y = y_lab, label = .label),
+    fontface = "bold", size = 4
+  )
+
+print(VegSevCats)
+ggsave(file.path(output_dir,"Veg_DroughtSev.png"),
+       VegSevCats, width=10, height=8, dpi=300, bg="white", units="in")
+
+
+```
+
+
+
+```{r Figx_Veg_only, fig.cap= "Figure x. "}
+pal_ai <- c(
+  "DBF" = "#753bbd",
+  "ENF" = "#2F80ED",
+  "GRA" = "#2dc84d", 
+  "SHR" = "#ff7f41"
+)
+
+
+
+bw_use <- 0.4
+dens   <- ggdist::density_unbounded(bandwidth = bw_use)
+
+lvl = c("DBF", "ENF", "GRA", "SHR")
+offs <- c(DBF = 0.0, ENF = 0.2, GRA = 0.4, SHR = 0.6)
+
+dat3 <- Daily %>%
+  filter(!is.na(Veg), !is.na(DDF)) %>%
+  mutate(
+    Veg = factor(Veg, levels = lvl),
+    idx   = as.numeric(Veg),
+    x_pos = idx + offs[as.character(Veg)]
+  )
+
+# Tukey letters + positions aligned to x_pos
+letters_df <- tukey_letters(dat3, x = "Veg", y = "DDF")
+
+y_tops <- dat3 %>%
+  group_by(Veg) %>%
+  summarise(y_top = max(DDF, na.rm = TRUE), .groups = "drop")
+
+span <- diff(range(dat3$DDF, na.rm = TRUE))
+
+letters_plot <- y_tops %>%
+  mutate(Veg = as.character(Veg)) %>%
+  left_join(letters_df %>% mutate(Veg = as.character(Veg)), by = "Veg") %>%
+  mutate(
+    idx   = as.numeric(factor(Veg, levels = lvl)),
+    x_pos = idx + offs[Veg],
+    y_lab = y_top + 0.06 * span
+  )
+
+veg_plot <- ggplot(dat3, aes(x = x_pos, y = DDF, fill = Veg, group = Veg)) +
+  ggdist::stat_halfeye(
+    data = ~subset(.x, Veg == "DBF"),
+    density = dens, .width = 0, alpha = 0.35,   # <- lighter density
+    slab_color = pal_ai["DBF"], slab_linewidth = 1.1
+  ) +
+  ggdist::stat_halfeye(
+    data = ~subset(.x, Veg == "ENF"),
+    density = dens, .width = 0, alpha = 0.35,
+    slab_color = pal_ai["ENF"], slab_linewidth = 1.1
+  ) +
+
+  ggdist::stat_halfeye(
+    data = ~subset(.x, Veg == "GRA"),
+    density = dens, .width = 0, alpha = 0.35,   # <- lighter density
+    slab_color = pal_ai["GRA"], slab_linewidth = 1.1
+  ) +
+  ggdist::stat_halfeye(
+    data = ~subset(.x, Veg == "SHR"),
+    density = dens, .width = 0, alpha = 0.35,
+    slab_color = pal_ai["SHR"], slab_linewidth = 1.1
+  ) +
+
+  
+  geom_boxplot(
+    width = 0.35, linewidth = 0.8, color = "black", outlier.shape = NA,
+    alpha = 0.90                                  # <- stronger box color
+  ) +
+  
+  stat_summary(
+    fun = mean, geom = "point",
+    shape = 21, size = 2.2,
+    color = "black", fill = "white",
+    stroke = 1.1                                  # <- thicker outline
+  ) +
+  
+  scale_y_continuous(breaks = seq(-10, 10, by = 2)) +
+  coord_flip(clip = "off") +
+  theme_ddf_facet +
+  
+  scale_x_continuous(
+    breaks = c(1.0, 2.2, 3.4,4.6),
+    labels = c("DBF", "ENF", "GRA", "SHR")        # <- display label fix
+  ) +
+  
+  scale_fill_manual(
+    values = pal_ai,
+    breaks = lvl#,
+    #labels = c(Humid="Humid", SemiArid="Semi-Arid", Arid="Arid")  # <- legend label fix
+  ) +
+  
+  labs(
+   # title = "DDF by Veg",
+    y = "Daily DDF (hours)", x = "",
+    #caption = paste0("Half-eye: unbounded Gaussian KDE (bw = ", bw_use, "). White dot: mean"),
+    #fill = NULL
+  ) +
+  
+  geom_text(
+    data = letters_plot,
+    inherit.aes = FALSE,
+    aes(x = x_pos, y = y_lab, label = .label),
+    fontface = "bold", size = 5
+  )
+
+print(veg_plot)
+
+ggsave(
+  file.path(output_dir, "Veg_only.png"),
+  veg_plot, width = 8, height = 6, dpi = 300, bg = "white", units = "in"
+)
+
+
+```
+
+\newpage
+## AI cats
+
+
+```{r Figx_AI_only, fig.cap= "Figure x. "}
+pal_ai <- c(
+  "Arid" = "#E4572E",
+  "Humid" = "#17BEBB"
+)
+
+
+bw_use <- 0.4
+dens   <- ggdist::density_unbounded(bandwidth = bw_use)
+
+lvl  <- c("Humid","Arid")
+offs <- c(Humid = 0.0, Arid = 0.4)
+
+dat3 <- Daily %>%
+  filter(!is.na(AI_cat), !is.na(DDF)) %>%
+  mutate(
+    AI_cat = factor(AI_cat, levels = lvl),
+    idx   = as.numeric(AI_cat),
+    x_pos = idx + offs[as.character(AI_cat)]
+  )
+
+
+
+# one overall Arid vs Humid test
+p_ai <- tryCatch(
+  t.test(DDF ~ AI_cat, data = dat3)$p.value,
+  error = function(e) NA_real_
+)
+
+sig_AI_cat <- dat3 %>%
+  summarise(
+    y_max = max(DDF, na.rm = TRUE),
+    y_min = min(DDF, na.rm = TRUE)
+  ) %>%
+  mutate(
+    span = y_max - y_min,
+    star = p_to_stars(p_ai),
+    y_bar = y_max + 0.08 * span,
+    x_bar = mean(c(1.0, 2.4))
+  )
+
+
+
+ai_plot <- ggplot(dat3, aes(x = x_pos, y = DDF, fill = AI_cat, group = AI_cat)) +
+  
+  ggdist::stat_halfeye(
+    data = ~subset(.x, AI_cat == "Humid"),
+    density = dens, .width = 0, alpha = 0.35,   # <- lighter density
+    slab_color = pal_ai["Humid"], slab_linewidth = 1.1
+  ) +
+  
+  ggdist::stat_halfeye(
+    data = ~subset(.x, AI_cat == "Arid"),
+    density = dens, .width = 0, alpha = 0.35,
+    slab_color = pal_ai["Arid"], slab_linewidth = 1.1
+  ) +
+  
+  geom_boxplot(
+    width = 0.35, linewidth = 0.8, color = "black", outlier.shape = NA,
+    alpha = 0.90                                  # <- stronger box color
+  ) +
+  
+  stat_summary(
+    fun = mean, geom = "point",
+    shape = 21, size = 2.2,
+    color = "black", fill = "white",
+    stroke = 1.1                                  # <- thicker outline
+  ) +
+  
+  scale_y_continuous(breaks = seq(-10, 10, by = 2)) +
+  coord_flip(clip = "off") +
+  theme_ddf_facet +
+  
+  scale_x_continuous(
+    breaks = c(1.0, 2.2),
+    labels = c("Humid","Arid")        # <- display label fix
+  ) +
+  
+  scale_fill_manual(
+    values = pal_ai,
+    breaks = lvl,
+    labels = c(Humid="Humid", Arid="Arid")  # <- legend label fix
+  ) +
+  
+  labs(
+    #title = "DDF by Aridity",
+    y = "Daily DDF (hours)", x = "",
+    #caption = paste0("Half-eye: unbounded Gaussian KDE (bw = ", bw_use, "). White dot: mean"),
+    #fill = NULL
+  ) +
+  
+    geom_text(
+    data = sig_AI_cat,
+    inherit.aes = FALSE,
+    aes(x = x_bar, y = y_bar, label = star),
+    fontface = "bold", size = 5
+  )
+  
+  # geom_text(
+  #   data = letters_plot,
+  #   inherit.aes = FALSE,
+  #   aes(x = x_pos, y = y_lab, label = .label),
+  #   fontface = "bold", size = 5
+  # )
+
+print(ai_plot)
+
+ggsave(
+  file.path(output_dir, "AIcat_only.png"),
+  ai_plot, width = 8, height = 3.5, dpi = 300, bg = "white", units = "in"
+)
+
+
+```
+
+```{r Figx_AI_Drought,  fig.cap= "Figure x. AI_cat"}
+knitr::opts_chunk$set(
+  echo = FALSE,      # Hide code
+  warning = FALSE,   # Hide warnings
+  message = FALSE    # Optional: hide package loading messages
+)
+
+# ---- data ----
+AI_cat_df <- Daily %>%
+  filter(!is.na(AI_cat), !is.na(Drought), !is.na(DDF)) %>%
+  mutate(
+    Drought = factor(Drought, levels = c("ND","Drought")),
+    AI_cat  = factor(AI_cat, levels = c("Arid", "Semi-Arid", "Humid")),
+    x_pos   = as.numeric(Drought) + dplyr::case_when(
+      Drought == "ND"      ~ -0.2,
+      Drought == "Drought" ~  0.0
+    )
+  )
+
+bw_use <- 0.4
+dens   <- ggdist::density_unbounded(bandwidth = bw_use)
+
+# stars per facet + robust y position
+sig_AI_cat <- AI_cat_df %>%
+  group_by(AI_cat) %>%
+  summarise(
+    p = tryCatch(t.test(DDF ~ Drought)$p.value, error = function(e) NA_real_),
+    y_max = max(DDF, na.rm = TRUE),
+    span  = diff(range(DDF, na.rm = TRUE)),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    star  = vapply(p, p_to_stars, character(1)),
+    y_bar = y_max + 0.08 * span,
+    x_bar = mean(c(0.8, 2.0))  # midpoint of shifted centers
+  )
+
+# ND median line per facet (AI_cat)
+nd_line_ai <- AI_cat_df %>%
+  filter(Drought == "ND") %>%
+  group_by(AI_cat) %>%
+  summarise(nd_med = median(DDF, na.rm = TRUE), .groups = "drop")
+
+AI_catDroughtPlot <- ggplot(AI_cat_df, aes(x = x_pos, y = DDF, fill = Drought, group = Drought)) +
+
+  # ND median reference line (appears vertical after coord_flip)
+  ggplot2::geom_hline(
+    data = nd_line_ai,
+    aes(yintercept = nd_med),
+    linetype = "dashed",
+    color = "gray30",
+    linewidth = 0.8
+  ) +
+
+  ggdist::stat_halfeye(
+    data = ~subset(.x, Drought == "ND"),
+    density = dens, .width = 0, alpha = 0.5,
+    slab_color = "#17BEBB", slab_linewidth = 1.1
+  ) +
+  ggdist::stat_halfeye(
+    data = ~subset(.x, Drought == "Drought"),
+    density = dens, .width = 0, alpha = 0.5,
+    slab_color = "#E4572E", slab_linewidth = 1.1
+  ) +
+
+  geom_boxplot(width = 0.35, linewidth = 0.8, color = "black", outlier.shape = NA) +
+  stat_summary(fun = mean, geom = "point",
+               shape = 21, size = 2, color = "black", fill = "white", stroke = 0.8) +
+
+  # headroom for stars
+  #scale_y_continuous(expand = ggplot2::expansion(mult = c(0.05, 0.20))) +
+    scale_y_continuous(
+    breaks = seq(-10, 10, by = 2)#,
+    #expand = ggplot2::expansion(mult = c(0.05, 0.20)
+    )+
+
+  coord_flip(clip = "off") +
+  theme_ddf_facet +
+  #theme(plot.margin = margin(5.5, 3.5, 5.5, 5.5)) +
+
+  # Align tick labels with shifted centers
+  scale_x_continuous(
+    breaks = c(0.8, 2.0),
+    labels = c("ND","Drought")
+  ) +
+
+  scale_fill_manual(values = c("ND" = "#17BEBB", "Drought" = "#E4572E")) +
+  facet_wrap(~AI_cat, nrow = 3, ncol = 1) +
+
+  labs(
+    #title = "DDF by Drought Category and Aridity",
+    y = "Daily DDF (hours)", x = "",
+    #caption = paste0("Half-eye: unbounded Gaussian KDE (bw = ", bw_use, "). White dot: mean")
+  ) +
+
+  geom_text(
+    data = sig_AI_cat,
+    inherit.aes = FALSE,
+    aes(x = x_bar, y = y_bar, label = star),
+    fontface = "bold", size = 7
+  )
+
+print(AI_catDroughtPlot)
+
+ggsave(file.path(output_dir,"AIcat_Drought_vs_ND.png"),
+       AI_catDroughtPlot, width=8, height=6, dpi=300, bg="white", units="in")
+
+```
+
+```{r Figx_AI_DroughtSev, fig.cap= "Figure x. "}
+
+bw_use <- 0.4
+dens   <- ggdist::density_unbounded(bandwidth = bw_use)
+
+v3 <- Daily %>%
+  filter(!is.na(AI_cat), !is.na(drought_cat), !is.na(DDF)) %>%
+  mutate(
+    drought_cat = factor(drought_cat, levels = c("ND","LS","MS")),
+    AI_cat      = factor(AI_cat, levels = c("Arid", "Semi-Arid", "Humid")),
+    x_pos = as.numeric(drought_cat) + dplyr::case_when(
+      drought_cat == "ND" ~ 0.0,
+      drought_cat == "LS" ~ 0.2,
+      drought_cat == "MS" ~ 0.4
+    )
+  )
+
+# ND median line per AI_cat facet (use v3, not ai_df)
+nd_line_ai <- v3 %>%
+  filter(drought_cat == "ND") %>%
+  group_by(AI_cat) %>%
+  summarise(nd_med = median(DDF, na.rm = TRUE), .groups = "drop")
+
+# Tukey letters + positions (add x_pos + keep y_lab tighter)
+letters_by_AI_cat <- v3 %>%
+  group_by(AI_cat) %>%
+  group_modify(~{
+    labs <- tukey_letters(.x, x = "drought_cat", y = "DDF")
+    y_top <- .x %>%
+      group_by(drought_cat) %>%
+      summarise(y_top = max(DDF, na.rm = TRUE), .groups = "drop")
+    
+    span <- diff(range(.x$DDF, na.rm = TRUE))
+    
+    dplyr::left_join(labs, y_top, by = "drought_cat") %>%
+      mutate(
+        # smaller offset so it stays inside the panel more often
+        y_lab = y_top + 0.06 * span,
+        x_pos = as.numeric(factor(drought_cat, levels = c("ND","LS","MS"))) +
+          dplyr::case_when(
+            drought_cat == "ND" ~ 0.0,
+            drought_cat == "LS" ~ 0.2,
+            drought_cat == "MS" ~ 0.4
+          )
+      )
+  }) %>%
+  ungroup()
+
+AI_catSevCats <- ggplot(v3, aes(x = x_pos, y = DDF, fill = drought_cat, group = drought_cat)) +
+  
+  # ND median reference line (use ggplot2 namespace to avoid masking)
+  ggplot2::geom_hline(
+    data = nd_line_ai,
+    aes(yintercept = nd_med),
+    linetype = "dashed",
+    color = "gray30",
+    linewidth = 0.8
+  ) +
+  
+  ggdist::stat_halfeye(
+    data = ~subset(.x, drought_cat == "ND"),
+    density = dens, .width = 0, alpha = 0.5,
+    slab_color = "#56B4E9", slab_linewidth = 1.1
+  ) +
+  ggdist::stat_halfeye(
+    data = ~subset(.x, drought_cat == "LS"),
+    density = dens, .width = 0, alpha = 0.5,
+    slab_color = "#E69F00", slab_linewidth = 1.1
+  ) +
+  ggdist::stat_halfeye(
+    data = ~subset(.x, drought_cat == "MS"),
+    density = dens, .width = 0, alpha = 0.5,
+    slab_color = "#D55E00", slab_linewidth = 1.1
+  ) +
+  
+  geom_boxplot(width = 0.35, linewidth = 0.8, color = "black", outlier.shape = NA) +
+  stat_summary(fun = mean, geom = "point",
+               shape = 21, size = 2, color = "black", fill = "white", stroke = 0.8) +
+  
+  # IMPORTANT: give DDF axis extra headroom so letters aren’t clipped after flip
+  #scale_y_continuous(expand = ggplot2::expansion(mult = c(0.05, 0.20))) +
+  scale_y_continuous(
+    breaks = seq(-10, 10, by = 2)#,
+    #expand = ggplot2::expansion(mult = c(0.05, 0.20)
+    )+
+  
+  coord_flip(clip = "off") +
+  theme_ddf_facet +
+  #theme(plot.margin = margin(5.5, 3.5, 5.5, 5.5)) +  # right margin helps after flip
+  
+  # Align the categorical axis labels WITH the nudged centers
+  scale_x_continuous(
+    breaks = c(1.0, 2.2, 3.4),
+    labels = c("ND","LS","MS")
+  ) +
+  
+  scale_fill_manual(values = c("ND"="#56B4E9","LS"="#E69F00","MS"="#D55E00")) +
+  facet_wrap(~AI_cat, nrow = 3, ncol = 1) +
+  
+  labs(
+   # title = "DDF by Drought Severity and Aridity",
+    y = "Daily DDF (hours)", x = "",
+    #caption = paste0("Half-eye: unbounded Gaussian KDE (bw = ", bw_use, "). White dot: mean")
+  ) +
+  
+  geom_text(
+    data = letters_by_AI_cat,
+    aes(x = x_pos, y = y_lab, label = .label),
+    inherit.aes = FALSE,
+    fontface = "bold", size = 5
+  )
+
+print(AI_catSevCats)
+
+ggsave(file.path(output_dir,"AIcat_DroughtSev.png"),
+       AI_catSevCats, width=8, height=8, dpi=300, bg="white", units="in")
+
+```
+
+\newpage
+## DDF difference BarPlots
+
+```{r Barplots_Veg_AI, fig.cap= "Figure Delta DDF by Veg and sitename."}
+
+knitr::opts_chunk$set(
+  echo = FALSE,      # Hide code
+  warning = FALSE,   # Hide warnings
+  message = FALSE    # Optional: hide package loading messages
+)
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggpattern)
+
+theme_ddf_facet <- theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.line = element_line(linewidth = 0.8, color = "black"),
+    axis.text.x = element_text(size = 14, face = "bold", color = "black"),
+    axis.text.y = element_text(size = 14, face = "bold", color = "black"),
+    axis.ticks = element_line(color = "black", linewidth = 0.8),
+    axis.title.y = element_text(size = 14, face = "bold", color = "black"),
+    axis.title.x = element_text(size = 12, face = "bold", color = "black"),
+    strip.text = element_text(size = 12, face = "bold", color = "black"),
+    panel.grid.major.x = element_line(linewidth = 0.4, color = "grey90"),
+    panel.grid.minor.x = element_line(linewidth = 0.3, color = "grey95"),
+    plot.title = element_text(size = 15, face = "bold", hjust = 0.5)
+  )
+
+# 1) Prep
+df <- Daily %>%
+  filter(!is.na(Drought), !is.na(DDF), !is.na(AI_cat), !is.na(Veg), !is.na(mean_AI)) %>%
+  mutate(
+    Drought = factor(Drought, levels = c("ND", "Drought")),
+    Veg     = factor(Veg, levels = c("DBF", "ENF", "GRA", "SHR")),
+    AI_cat  = factor(AI_cat, levels = c("Arid", "Humid"))
+  )
+
+# 2) One veg / AI_cat / mean_AI per site
+site_veg <- df %>%
+  count(sitename, Veg, name = "n") %>%
+  arrange(sitename, desc(n)) %>%
+  group_by(sitename) %>%
+  slice(1) %>%
+  ungroup() %>%
+  dplyr::select(sitename, Veg)
+
+site_ai <- df %>%
+  count(sitename, AI_cat, name = "n") %>%
+  arrange(sitename, desc(n)) %>%
+  group_by(sitename) %>%
+  slice(1) %>%
+  ungroup() %>%
+  dplyr::select(sitename, AI_cat)
+
+site_mean_ai <- df %>%
+  group_by(sitename) %>%
+  summarise(mean_AI = mean(mean_AI, na.rm = TRUE), .groups = "drop")
+
+# 3) Mean DDF per site × class, then delta
+delta_site <- df %>%
+  group_by(sitename, Drought) %>%
+  summarise(
+    mean_DDF = mean(DDF, na.rm = TRUE),
+    n_days   = n(),
+    .groups  = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = Drought,
+    values_from = c(mean_DDF, n_days)
+  ) %>%
+  mutate(delta_DDF = mean_DDF_Drought - mean_DDF_ND) %>%
+  left_join(site_veg, by = "sitename") %>%
+  left_join(site_ai, by = "sitename") %>%
+  left_join(site_mean_ai, by = "sitename") %>%
+  filter(!is.na(delta_DDF), !is.na(Veg), !is.na(AI_cat), !is.na(mean_AI)) %>%
+  #arrange(Veg, mean_AI) %>%
+  arrange(delta_DDF) %>%
+  mutate(
+    site_order = row_number(),
+    sitename = factor(sitename, levels = sitename)
+  )
+
+veg_cols <- c(
+  "DBF" = "#753bbd",
+  "ENF" = "#2F80ED",
+  "GRA" = "#2dc84d",
+  "SHR" = "#ff7f41"
+)
+
+p1 <- ggplot(
+  delta_site,
+  aes(x = site_order, y = delta_DDF, fill = Veg, pattern = AI_cat)
+) +
+  geom_hline(
+    yintercept = c(-1, -0.5, 0.5, 1),
+    linewidth = 0.6,
+    color = "gray50",
+    linetype = "dashed"
+  ) +
+  geom_hline(yintercept = 0, linewidth = 0.8, color = "gray30") +
+  ggpattern::geom_col_pattern(
+    width = 0.85,
+    color = "black",
+    pattern_fill = "black",
+    pattern_colour = "black",
+    pattern_angle = 45,
+    pattern_density = 0.25,
+    pattern_spacing = 0.02,
+    pattern_key_scale_factor = 0.6
+  ) +
+  scale_fill_manual(values = veg_cols) +
+  scale_pattern_manual(values = c("Arid" = "none", "Humid" = "stripe")) +
+  scale_x_continuous(
+    breaks = delta_site$site_order,
+    labels = delta_site$sitename,
+    expand = expansion(mult = c(0.01, 0.03))
+  ) +
+  scale_y_continuous(
+    limits = c(-1.2, 1.2),
+    breaks = seq(-1, 1, 0.5)
+  ) +
+  theme_ddf_facet +
+  theme(
+    axis.line = element_line(linewidth = 0.8, color = "black"),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 10, color = "black"),
+    axis.text.y = element_text(size = 10, face = "bold", color = "black"),
+    axis.title = element_text(size = 12, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(face = "bold", color = "black", size = 11),
+    legend.title = element_blank(),
+    plot.margin = margin(20, 10, 10, 10)
+  ) +
+  labs(
+    x = NULL,
+    y = "ΔDDF (hours)"
+  )
+
+print(p1)
+
+ggsave(
+  file.path(output_dir, "BarPlots_DeltaDDF_by_Veg_and_AI_cat.png"),
+  p1,
+  width = 12,
+  height = 8,
+  dpi = 600,
+  bg = "white",
+  units = "in",
+  device = ragg::agg_png
+)
+
+```
+
+```{r Barplots_Veg_AI_LS, fig.cap= "Figure Delta DDF by Veg and sitename."}
+
+knitr::opts_chunk$set(
+  echo = FALSE,      # Hide code
+  warning = FALSE,   # Hide warnings
+  message = FALSE    # Optional: hide package loading messages
+)
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggpattern)
+
+theme_ddf_facet <- theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.line = element_line(linewidth = 0.8, color = "black"),
+    axis.text.x = element_text(size = 14, face = "bold", color = "black"),
+    axis.text.y = element_text(size = 14, face = "bold", color = "black"),
+    axis.ticks = element_line(color = "black", linewidth = 0.8),
+    axis.title.y = element_text(size = 14, face = "bold", color = "black"),
+    axis.title.x = element_text(size = 12, face = "bold", color = "black"),
+    strip.text = element_text(size = 12, face = "bold", color = "black"),
+    panel.grid.major.x = element_line(linewidth = 0.4, color = "grey90"),
+    panel.grid.minor.x = element_line(linewidth = 0.3, color = "grey95"),
+    plot.title = element_text(size = 15, face = "bold", hjust = 0.5)
+  )
+
+# 1) Prep
+df_ls <- Daily %>%
+  filter(!is.na(drought_cat), !is.na(DDF), !is.na(AI_cat), !is.na(Veg)) %>%
+  filter(drought_cat %in% c("ND", "LS")) %>%
+  mutate(
+    drought_cat = factor(drought_cat, levels = c("ND", "LS")),
+    Veg     = factor(Veg, levels = c("DBF", "ENF", "GRA", "SHR")),
+    AI_cat  = factor(AI_cat, levels = c("Arid", "Humid"))
+  )
+
+# 2) One veg / AI_cat per site
+site_veg <- df_ls %>%
+  count(sitename, Veg, name = "n") %>%
+  arrange(sitename, desc(n)) %>%
+  group_by(sitename) %>%
+  slice(1) %>%
+  ungroup() %>%
+  dplyr::select(sitename, Veg)
+
+site_ai <- df_ls %>%
+  count(sitename, AI_cat, name = "n") %>%
+  arrange(sitename, desc(n)) %>%
+  group_by(sitename) %>%
+  slice(1) %>%
+  ungroup() %>%
+  dplyr::select(sitename, AI_cat)
+
+# 3) Mean DDF per site × class, then delta
+delta_site <- df_ls %>%
+  group_by(sitename) %>%
+  filter(all(c("ND", "LS") %in% drought_cat)) %>%
+  ungroup() %>%
+  group_by(sitename, drought_cat) %>%
+  summarise(
+    mean_DDF = mean(DDF, na.rm = TRUE),
+    n_days   = n(),
+    .groups  = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = drought_cat,
+    values_from = c(mean_DDF, n_days)
+  ) %>%
+  mutate(delta_DDF = mean_DDF_LS - mean_DDF_ND) %>%
+  left_join(site_veg, by = "sitename") %>%
+  left_join(site_ai, by = "sitename") %>%
+  filter(!is.na(delta_DDF), !is.na(Veg), !is.na(AI_cat)) %>%
+  arrange(delta_DDF) %>%
+  mutate(
+    site_order = row_number(),
+    sitename = factor(sitename, levels = sitename)
+  )
+
+veg_cols <- c(
+  "DBF" = "#753bbd",
+  "ENF" = "#2F80ED",
+  "GRA" = "#2dc84d",
+  "SHR" = "#ff7f41"
+)
+
+p_ls <- ggplot(
+  delta_site,
+  aes(x = site_order, y = delta_DDF, fill = Veg, pattern = AI_cat)
+) +
+  geom_hline(
+    yintercept = c(-1, -0.5, 0.5, 1),
+    linewidth = 0.6,
+    color = "gray50",
+    linetype = "dashed"
+  ) +
+  geom_hline(yintercept = 0, linewidth = 0.8, color = "gray30") +
+  ggpattern::geom_col_pattern(
+    width = 0.85,
+    color = "black",
+    pattern_fill = "black",
+    pattern_colour = "black",
+    pattern_angle = 45,
+    pattern_density = 0.25,
+    pattern_spacing = 0.02,
+    pattern_key_scale_factor = 0.6
+  ) +
+  scale_fill_manual(values = veg_cols) +
+  scale_pattern_manual(values = c("Arid" = "none", "Humid" = "stripe")) +
+  scale_x_continuous(
+    breaks = delta_site$site_order,
+    labels = delta_site$sitename,
+    expand = expansion(mult = c(0.01, 0.03))
+  ) +
+  scale_y_continuous(
+    limits = c(-1.2, 1.2),
+    breaks = seq(-1, 1, 0.5)
+  ) +
+  theme_ddf_facet +
+  theme(
+    axis.line = element_line(linewidth = 0.8, color = "black"),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 10, color = "black"),
+    axis.text.y = element_text(size = 10, face = "bold", color = "black"),
+    axis.title = element_text(size = 12, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(face = "bold", color = "black", size = 11),
+    legend.title = element_blank(),
+    plot.margin = margin(20, 10, 10, 10)
+  ) +
+  labs(
+    x = NULL,
+    y = "LS ΔDDF (hours)"
+  )
+
+print(p_ls)
+
+ggsave(
+  file.path(output_dir, "BarPlots_DeltaDDF_by_Veg_and_AI_cat_LS.png"),
+  p_ls,
+  width = 12,
+  height = 8,
+  dpi = 600,
+  bg = "white",
+  units = "in",
+  device = ragg::agg_png
+)
+
+```
+
+```{r Barplots_Veg_AI_MS, fig.cap= "Figure Delta DDF by Veg and sitename."}
+
+knitr::opts_chunk$set(
+  echo = FALSE,      # Hide code
+  warning = FALSE,   # Hide warnings
+  message = FALSE    # Optional: hide package loading messages
+)
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggpattern)
+
+theme_ddf_facet <- theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.line = element_line(linewidth = 0.8, color = "black"),
+    axis.text.x = element_text(size = 14, face = "bold", color = "black"),
+    axis.text.y = element_text(size = 14, face = "bold", color = "black"),
+    axis.ticks = element_line(color = "black", linewidth = 0.8),
+    axis.title.y = element_text(size = 14, face = "bold", color = "black"),
+    axis.title.x = element_text(size = 12, face = "bold", color = "black"),
+    strip.text = element_text(size = 12, face = "bold", color = "black"),
+    panel.grid.major.x = element_line(linewidth = 0.4, color = "grey90"),
+    panel.grid.minor.x = element_line(linewidth = 0.3, color = "grey95"),
+    plot.title = element_text(size = 15, face = "bold", hjust = 0.5)
+  )
+
+# 1) Prep
+df_ms <- Daily %>%
+  filter(!is.na(drought_cat), !is.na(DDF), !is.na(AI_cat), !is.na(Veg)) %>%
+  filter(drought_cat %in% c("ND", "MS")) %>%
+  mutate(
+    drought_cat = factor(drought_cat, levels = c("ND", "MS")),
+    Veg     = factor(Veg, levels = c("DBF", "ENF", "GRA", "SHR")),
+    AI_cat  = factor(AI_cat, levels = c("Arid", "Humid"))
+  )
+
+# 2) One veg / AI_cat per site
+site_veg <- df_ms %>%
+  count(sitename, Veg, name = "n") %>%
+  arrange(sitename, desc(n)) %>%
+  group_by(sitename) %>%
+  slice(1) %>%
+  ungroup() %>%
+  dplyr::select(sitename, Veg)
+
+site_ai <- df_ms %>%
+  count(sitename, AI_cat, name = "n") %>%
+  arrange(sitename, desc(n)) %>%
+  group_by(sitename) %>%
+  slice(1) %>%
+  ungroup() %>%
+  dplyr::select(sitename, AI_cat)
+
+# 3) Mean DDF per site × class, then delta
+delta_site <- df_ms %>%
+  group_by(sitename) %>%
+  filter(all(c("ND", "MS") %in% drought_cat)) %>%
+  ungroup() %>%
+  group_by(sitename, drought_cat) %>%
+  summarise(
+    mean_DDF = mean(DDF, na.rm = TRUE),
+    n_days   = n(),
+    .groups  = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = drought_cat,
+    values_from = c(mean_DDF, n_days)
+  ) %>%
+  mutate(delta_DDF = mean_DDF_MS - mean_DDF_ND) %>%
+  left_join(site_veg, by = "sitename") %>%
+  left_join(site_ai, by = "sitename") %>%
+  filter(!is.na(delta_DDF), !is.na(Veg), !is.na(AI_cat)) %>%
+  arrange(delta_DDF) %>%
+  mutate(
+    site_order = row_number(),
+    sitename = factor(sitename, levels = sitename)
+  )
+
+veg_cols <- c(
+  "DBF" = "#753bbd",
+  "ENF" = "#2F80ED",
+  "GRA" = "#2dc84d",
+  "SHR" = "#ff7f41"
+)
+
+p_ms <- ggplot(
+  delta_site,
+  aes(x = site_order, y = delta_DDF, fill = Veg, pattern = AI_cat)
+) +
+  geom_hline(
+    yintercept = c(-1, -0.5, 0.5, 1),
+    linewidth = 0.6,
+    color = "gray50",
+    linetype = "dashed"
+  ) +
+  geom_hline(yintercept = 0, linewidth = 0.8, color = "gray30") +
+  ggpattern::geom_col_pattern(
+    width = 0.85,
+    color = "black",
+    pattern_fill = "black",
+    pattern_colour = "black",
+    pattern_angle = 45,
+    pattern_density = 0.25,
+    pattern_spacing = 0.02,
+    pattern_key_scale_factor = 0.6
+  ) +
+  scale_fill_manual(values = veg_cols) +
+  scale_pattern_manual(values = c("Arid" = "none", "Humid" = "stripe")) +
+  scale_x_continuous(
+    breaks = delta_site$site_order,
+    labels = delta_site$sitename,
+    expand = expansion(mult = c(0.01, 0.03))
+  ) +
+  scale_y_continuous(
+    limits = c(-1.2, 1.2),
+    breaks = seq(-1, 1, 0.5)
+  ) +
+  theme_ddf_facet +
+  theme(
+    axis.line = element_line(linewidth = 0.8, color = "black"),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 10, color = "black"),
+    axis.text.y = element_text(size = 10, face = "bold", color = "black"),
+    axis.title = element_text(size = 12, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(face = "bold", color = "black", size = 11),
+    legend.title = element_blank(),
+    plot.margin = margin(20, 10, 10, 10)
+  ) +
+  labs(
+    x = NULL,
+    y = "MS ΔDDF (hours)"
+  )
+
+print(p_ms)
+
+ggsave(
+  file.path(output_dir, "BarPlots_DeltaDDF_by_Veg_and_AI_cat_MS.png"),
+  p_ms,
+  width = 12,
+  height = 8,
+  dpi = 600,
+  bg = "white",
+  units = "in",
+  device = ragg::agg_png
+)
+
+```
+
+
+
+```{r Barplots_AI, fig.cap= "Figure Delta DDF  and sitename."}
+
+knitr::opts_chunk$set(
+  echo = FALSE,      # Hide code
+  warning = FALSE,   # Hide warnings
+  message = FALSE    # Optional: hide package loading messages
+)
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggpattern)
+
+theme_ddf_facet <- theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.line = element_line(linewidth = 0.8, color = "black"),
+    axis.text.x = element_text(size = 14, face = "bold", color = "black"),
+    axis.text.y = element_text(size = 14, face = "bold", color = "black"),
+    axis.ticks = element_line(color = "black", linewidth = 0.8),
+    axis.title.y = element_text(size = 14, face = "bold", color = "black"),
+    axis.title.x = element_text(size = 12, face = "bold", color = "black"),
+    strip.text = element_text(size = 12, face = "bold", color = "black"),
+    panel.grid.major.x = element_line(linewidth = 0.4, color = "grey90"),
+    panel.grid.minor.x = element_line(linewidth = 0.3, color = "grey95"),
+    plot.title = element_text(size = 15, face = "bold", hjust = 0.5)
+  )
+
+# 1) Prep
+df <- Daily %>%
+  filter(!is.na(Drought), !is.na(DDF), !is.na(AI_cat), !is.na(Veg), !is.na(mean_AI)) %>%
+  mutate(
+    Drought = factor(Drought, levels = c("ND", "Drought")),
+    Veg     = factor(Veg, levels = c("DBF", "ENF", "GRA", "SHR")),
+    AI_cat  = factor(AI_cat, levels = c("Arid", "Humid"))
+  )
+
+# 2) One veg / AI_cat / mean_AI per site
+site_veg <- df %>%
+  count(sitename, Veg, name = "n") %>%
+  arrange(sitename, desc(n)) %>%
+  group_by(sitename) %>%
+  slice(1) %>%
+  ungroup() %>%
+  dplyr::select(sitename, Veg)
+
+site_ai <- df %>%
+  count(sitename, AI_cat, name = "n") %>%
+  arrange(sitename, desc(n)) %>%
+  group_by(sitename) %>%
+  slice(1) %>%
+  ungroup() %>%
+  dplyr::select(sitename, AI_cat)
+
+site_mean_ai <- df %>%
+  group_by(sitename) %>%
+  summarise(mean_AI = mean(mean_AI, na.rm = TRUE), .groups = "drop")
+
+# 3) Mean DDF per site × class, then delta
+delta_site <- df %>%
+  group_by(sitename, Drought) %>%
+  summarise(
+    mean_DDF = mean(DDF, na.rm = TRUE),
+    n_days   = n(),
+    .groups  = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = Drought,
+    values_from = c(mean_DDF, n_days)
+  ) %>%
+  mutate(delta_DDF = mean_DDF_Drought - mean_DDF_ND) %>%
+  left_join(site_veg, by = "sitename") %>%
+  left_join(site_ai, by = "sitename") %>%
+  left_join(site_mean_ai, by = "sitename") %>%
+  filter(!is.na(delta_DDF), !is.na(Veg), !is.na(AI_cat), !is.na(mean_AI)) %>%
+  #arrange(Veg, mean_AI) %>%
+  arrange(delta_DDF) %>%
+  mutate(
+    site_order = row_number(),
+    sitename = factor(sitename, levels = sitename)
+  )
+
+ai_cols <- c(
+  "Arid" = "#E4572E",
+  "Humid" = "#17BEBB"
+)
+
+p1 <- ggplot(
+  delta_site,
+  aes(x = site_order, y = delta_DDF, fill = AI_cat, pattern = AI_cat)
+) +
+  geom_hline(
+    yintercept = c(-0.5, 0.5),
+    linewidth = 0.6,
+    color = "gray50",
+    linetype = "dashed"
+  ) +
+  geom_hline(yintercept = 0, linewidth = 0.8, color = "gray30") +
+ geom_col(width = 0.85, color = "black") +
+  scale_fill_manual(values = ai_cols) +
+  scale_pattern_manual(values = c("Arid" = "none", "Humid" = "stripe")) +
+  scale_x_continuous(
+    breaks = delta_site$site_order,
+    labels = delta_site$sitename,
+    expand = expansion(mult = c(0.01, 0.03))
+  ) +
+  scale_y_continuous(
+    #limits = c(-1.2, 1.2),
+    breaks = seq(-1, 1, 0.5)
+  ) +
+  theme_ddf_facet +
+  theme(
+    axis.line = element_line(linewidth = 0.8, color = "black"),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 10, color = "black"),
+    axis.text.y = element_text(size = 10, face = "bold", color = "black"),
+    axis.title = element_text(size = 12, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(face = "bold", color = "black", size = 11),
+    legend.title = element_blank(),
+    plot.margin = margin(20, 10, 10, 10)
+  ) +
+  labs(
+    x = NULL,
+    y = "ΔDDF (hours)"
+  )
+
+print(p1)
+
+ggsave(
+  file.path(output_dir, "BarPlots_DeltaDDF_by_AI_cat.png"),
+  p1,
+  width = 12,
+  height = 8,
+  dpi = 600,
+  bg = "white",
+  units = "in",
+  device = ragg::agg_png
+)
+
+```
+
+```{r Barplots_AI_LS, fig.cap= "Figure Delta DDF  and sitename."}
+
+knitr::opts_chunk$set(
+  echo = FALSE,      # Hide code
+  warning = FALSE,   # Hide warnings
+  message = FALSE    # Optional: hide package loading messages
+)
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggpattern)
+
+theme_ddf_facet <- theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.line = element_line(linewidth = 0.8, color = "black"),
+    axis.text.x = element_text(size = 14, face = "bold", color = "black"),
+    axis.text.y = element_text(size = 14, face = "bold", color = "black"),
+    axis.ticks = element_line(color = "black", linewidth = 0.8),
+    axis.title.y = element_text(size = 14, face = "bold", color = "black"),
+    axis.title.x = element_text(size = 12, face = "bold", color = "black"),
+    strip.text = element_text(size = 12, face = "bold", color = "black"),
+    panel.grid.major.x = element_line(linewidth = 0.4, color = "grey90"),
+    panel.grid.minor.x = element_line(linewidth = 0.3, color = "grey95"),
+    plot.title = element_text(size = 15, face = "bold", hjust = 0.5)
+  )
+
+# 1) Prep
+df_ls <- Daily %>%
+  filter(!is.na(drought_cat), !is.na(DDF), !is.na(AI_cat), !is.na(Veg)) %>%
+  filter(drought_cat %in% c("ND", "LS")) %>%
+  mutate(
+    drought_cat = factor(drought_cat, levels = c("ND", "LS")),
+    Veg     = factor(Veg, levels = c("DBF", "ENF", "GRA", "SHR")),
+    AI_cat  = factor(AI_cat, levels = c("Arid", "Humid"))
+  )
+
+# 2) One veg / AI_cat per site
+site_veg <- df_ls %>%
+  count(sitename, Veg, name = "n") %>%
+  arrange(sitename, desc(n)) %>%
+  group_by(sitename) %>%
+  slice(1) %>%
+  ungroup() %>%
+  dplyr::select(sitename, Veg)
+
+site_ai <- df_ls %>%
+  count(sitename, AI_cat, name = "n") %>%
+  arrange(sitename, desc(n)) %>%
+  group_by(sitename) %>%
+  slice(1) %>%
+  ungroup() %>%
+  dplyr::select(sitename, AI_cat)
+
+# 3) Mean DDF per site × class, then delta
+delta_site <- df_ls %>%
+  group_by(sitename) %>%
+  filter(all(c("ND", "LS") %in% drought_cat)) %>%
+  ungroup() %>%
+  group_by(sitename, drought_cat) %>%
+  summarise(
+    mean_DDF = mean(DDF, na.rm = TRUE),
+    n_days   = n(),
+    .groups  = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = drought_cat,
+    values_from = c(mean_DDF, n_days)
+  ) %>%
+  mutate(delta_DDF = mean_DDF_LS - mean_DDF_ND) %>%
+  left_join(site_veg, by = "sitename") %>%
+  left_join(site_ai, by = "sitename") %>%
+  filter(!is.na(delta_DDF), !is.na(Veg), !is.na(AI_cat)) %>%
+  arrange(delta_DDF) %>%
+  mutate(
+    site_order = row_number(),
+    sitename = factor(sitename, levels = sitename)
+  )
+
+ai_cols <- c(
+  "Arid" = "#E4572E",
+  "Humid" = "#17BEBB"
+)
+
+p_ls <- ggplot(
+  delta_site,
+  aes(x = site_order, y = delta_DDF, fill = AI_cat, pattern = AI_cat)
+) +
+  geom_hline(
+    yintercept = c(-1, -0.5, 0.5, 1),
+    linewidth = 0.6,
+    color = "gray50",
+    linetype = "dashed"
+  ) +
+  geom_hline(yintercept = 0, linewidth = 0.8, color = "gray30") +
+ geom_col(width = 0.85, color = "black") +
+  scale_fill_manual(values = ai_cols) +
+  scale_pattern_manual(values = c("Arid" = "none", "Humid" = "stripe")) +
+  scale_x_continuous(
+    breaks = delta_site$site_order,
+    labels = delta_site$sitename,
+    expand = expansion(mult = c(0.01, 0.03))
+  ) +
+  scale_y_continuous(
+    limits = c(-1.2, 1.2),
+    breaks = seq(-1, 1, 0.5)
+  ) +
+  theme_ddf_facet +
+  theme(
+    axis.line = element_line(linewidth = 0.8, color = "black"),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 10, color = "black"),
+    axis.text.y = element_text(size = 10, face = "bold", color = "black"),
+    axis.title = element_text(size = 12, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(face = "bold", color = "black", size = 11),
+    legend.title = element_blank(),
+    plot.margin = margin(20, 10, 10, 10)
+  ) +
+  labs(
+    x = NULL,
+    y = "LS ΔDDF (hours)"
+  )
+
+print(p_ls)
+
+ggsave(
+  file.path(output_dir, "BarPlots_DeltaDDF_by_AI_cat_LS.png"),
+  p_ls,
+  width = 12,
+  height = 8,
+  dpi = 600,
+  bg = "white",
+  units = "in",
+  device = ragg::agg_png
+)
+
+```
+
+```{r Barplots_AI_MS, fig.cap= "Figure Delta DDF and sitename."}
+
+knitr::opts_chunk$set(
+  echo = FALSE,      # Hide code
+  warning = FALSE,   # Hide warnings
+  message = FALSE    # Optional: hide package loading messages
+)
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggpattern)
+
+theme_ddf_facet <- theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.line = element_line(linewidth = 0.8, color = "black"),
+    axis.text.x = element_text(size = 14, face = "bold", color = "black"),
+    axis.text.y = element_text(size = 14, face = "bold", color = "black"),
+    axis.ticks = element_line(color = "black", linewidth = 0.8),
+    axis.title.y = element_text(size = 14, face = "bold", color = "black"),
+    axis.title.x = element_text(size = 12, face = "bold", color = "black"),
+    strip.text = element_text(size = 12, face = "bold", color = "black"),
+    panel.grid.major.x = element_line(linewidth = 0.4, color = "grey90"),
+    panel.grid.minor.x = element_line(linewidth = 0.3, color = "grey95"),
+    plot.title = element_text(size = 15, face = "bold", hjust = 0.5)
+  )
+
+# 1) Prep
+df_ms <- Daily %>%
+  filter(!is.na(drought_cat), !is.na(DDF), !is.na(AI_cat), !is.na(Veg)) %>%
+  filter(drought_cat %in% c("ND", "MS")) %>%
+  mutate(
+    drought_cat = factor(drought_cat, levels = c("ND", "MS")),
+    Veg     = factor(Veg, levels = c("DBF", "ENF", "GRA", "SHR")),
+    AI_cat  = factor(AI_cat, levels = c("Arid", "Humid"))
+  )
+
+# 2) One veg / AI_cat per site
+site_veg <- df_ms %>%
+  count(sitename, Veg, name = "n") %>%
+  arrange(sitename, desc(n)) %>%
+  group_by(sitename) %>%
+  slice(1) %>%
+  ungroup() %>%
+  dplyr::select(sitename, Veg)
+
+site_ai <- df_ms %>%
+  count(sitename, AI_cat, name = "n") %>%
+  arrange(sitename, desc(n)) %>%
+  group_by(sitename) %>%
+  slice(1) %>%
+  ungroup() %>%
+  dplyr::select(sitename, AI_cat)
+
+# 3) Mean DDF per site × class, then delta
+delta_site <- df_ms %>%
+  group_by(sitename) %>%
+  filter(all(c("ND", "MS") %in% drought_cat)) %>%
+  ungroup() %>%
+  group_by(sitename, drought_cat) %>%
+  summarise(
+    mean_DDF = mean(DDF, na.rm = TRUE),
+    n_days   = n(),
+    .groups  = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = drought_cat,
+    values_from = c(mean_DDF, n_days)
+  ) %>%
+  mutate(delta_DDF = mean_DDF_MS - mean_DDF_ND) %>%
+  left_join(site_veg, by = "sitename") %>%
+  left_join(site_ai, by = "sitename") %>%
+  filter(!is.na(delta_DDF), !is.na(Veg), !is.na(AI_cat)) %>%
+  arrange(delta_DDF) %>%
+  mutate(
+    site_order = row_number(),
+    sitename = factor(sitename, levels = sitename)
+  )
+
+ai_cols <- c(
+  "Arid" = "#E4572E",
+  "Humid" = "#17BEBB"
+)
+
+p_ms <- ggplot(
+  delta_site,
+  aes(x = site_order, y = delta_DDF, fill = AI_cat, pattern = AI_cat)
+) +
+  geom_hline(
+    yintercept = c(-1, -0.5, 0.5, 1),
+    linewidth = 0.6,
+    color = "gray50",
+    linetype = "dashed"
+  ) +
+  geom_hline(yintercept = 0, linewidth = 0.8, color = "gray30") +
+ geom_col(width = 0.85, color = "black") +
+  scale_fill_manual(values = ai_cols) +
+  scale_pattern_manual(values = c("Arid" = "none", "Humid" = "stripe")) +
+  scale_x_continuous(
+    breaks = delta_site$site_order,
+    labels = delta_site$sitename,
+    expand = expansion(mult = c(0.01, 0.03))
+  ) +
+  scale_y_continuous(
+    limits = c(-1.2, 1.2),
+    breaks = seq(-1, 1, 0.5)
+  ) +
+  theme_ddf_facet +
+  theme(
+    axis.line = element_line(linewidth = 0.8, color = "black"),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 10, color = "black"),
+    axis.text.y = element_text(size = 10, face = "bold", color = "black"),
+    axis.title = element_text(size = 12, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(face = "bold", color = "black", size = 11),
+    legend.title = element_blank(),
+    plot.margin = margin(20, 10, 10, 10)
+  ) +
+  labs(
+    x = NULL,
+    y = "MS ΔDDF (hours)"
+  )
+
+print(p_ms)
+
+ggsave(
+  file.path(output_dir, "BarPlots_DeltaDDF_by_AI_cat_MS.png"),
+  p_ms,
+  width = 12,
+  height = 8,
+  dpi = 600,
+  bg = "white",
+  units = "in",
+  device = ragg::agg_png
+)
+
+```
+
+
+
+# ```{r Barplots_AI_cat, fig.cap= "Figure Delta DDF by AI_cat and sitename."}
+# 
+# knitr::opts_chunk$set(
+#   echo = FALSE,      # Hide code
+#   warning = FALSE,   # Hide warnings
+#   message = FALSE    # Optional: hide package loading messages
+# )
+# 
+# 
+# library(dplyr)
+# library(tidyr)
+# library(ggplot2)
+# 
+# #Organize from left to right based on mean_AI per sitename, versus AI_cat
+# 
+# theme_ddf_facet <- theme_classic() +
+#   theme(
+#     legend.position = "none",
+#     axis.line = element_line(linewidth = 0.8, color = "black"),
+#     axis.text.x = element_text(size = 12, face = "bold", color = "black"),
+#     axis.text.y = element_text(size = 13, face = "bold", color = "black"),
+#     axis.ticks = element_line(color = "black", linewidth = 0.8),
+#     #axis.text = element_text(size = 13, face = "bold", color = "black"),
+#     axis.title.x = element_text(size = 12, face = "bold", color = "black"),
+#     axis.title.y = element_text(size = 14, face = "bold", color = "black"),
+#     strip.text = element_text(size = 12, face = "bold", color = "black"),
+#     panel.grid.major.x = element_line(linewidth = 0.4, color = "grey90"),
+#     panel.grid.minor.x = element_line(linewidth = 0.3, color = "grey95"),
+#     plot.title = element_text(size = 15, face = "bold", hjust = 0.5)
+#   )
+# 
+# 
+# # 1) Prep
+# df <- Daily %>%
+#   filter(!is.na(Drought), !is.na(DDF), !is.na(AI_cat), !is.na(mean_AI)) %>%
+#   mutate(
+#     Drought = factor(Drought, levels = c("ND", "Drought")),
+#     AI_cat  = factor(AI_cat, levels = c("Arid", "Humid"))
+#   )
+# 
+# 
+# # 2) One AI_cat per site (most common)
+# site_ai <- df %>%
+#   count(sitename, AI_cat, name = "n") %>%
+#   arrange(sitename, desc(n)) %>%
+#   group_by(sitename) %>%
+#   slice(1) %>%
+#   ungroup() %>%
+#   dplyr::select(sitename, AI_cat)
+# 
+# # 3) One mean_AI per site
+# site_mean_ai <- df %>%
+#   group_by(sitename) %>%
+#   summarise(mean_AI = mean(mean_AI, na.rm = TRUE), .groups = "drop")
+# 
+# # 4) Mean DDF per site × drought class, then delta
+# delta_site <- df %>%
+#   group_by(sitename, Drought) %>%
+#   summarise(
+#     mean_DDF = mean(DDF, na.rm = TRUE),
+#     n_days   = n(),
+#     .groups  = "drop"
+#   ) %>%
+#   pivot_wider(
+#     names_from = Drought,
+#     values_from = c(mean_DDF, n_days)
+#   ) %>%
+#   mutate(delta_DDF = mean_DDF_Drought - mean_DDF_ND) %>%
+#   left_join(site_ai, by = "sitename") %>%
+#   left_join(site_mean_ai, by = "sitename") %>%
+#   filter(!is.na(delta_DDF), !is.na(AI_cat), !is.na(mean_AI)) %>%
+#   arrange(mean_AI) %>%   # <-- this is the key change
+#   mutate(sitename = factor(sitename, levels = sitename))
+# 
+# 
+# ai_cols <- c(
+#   "Arid" = "#E4572E",
+#   "Humid" = "#17BEBB"
+# )
+# 
+# 
+# # 5) Plot: ordered by AI_cat (trend-friendly)
+# p1 <- ggplot(delta_site, aes(x = delta_DDF, y = sitename, fill = AI_cat)) +
+#     
+#   geom_vline(xintercept = 1, linewidth = 0.6, color = "gray50", linetype = "dashed")+
+#   geom_vline(xintercept = 0.5, linewidth = 0.6, color = "gray50", linetype = "dashed")+
+#   geom_vline(xintercept = -0.5, linewidth = 0.6, color = "gray50", linetype = "dashed")+
+#   geom_vline(xintercept = -1, linewidth = 0.6, color = "gray50", linetype = "dashed")+
+#   
+#   geom_col(width = 0.85) +
+#   coord_flip() +
+#   scale_fill_manual(values = ai_cols)+
+#   geom_vline(xintercept = 0, linewidth = 0.8, color = "gray30")+
+# 
+#   theme_ddf_facet +
+#   
+#   theme(
+#     axis.line = element_line(linewidth = 0.8, color = "black"),
+#     plot.title  = element_text(size = 12, face = "bold", color = "black", hjust = 0.5),
+#     
+#     axis.text = element_text(size = 12),
+#     axis.title = element_text(size = 12, face = "bold"),
+#     
+#     axis.text.y = element_text(color = "black",face = "bold"),# size = 14),
+#     #axis.text.x = element_text(size = 11, color = "black"),
+#     
+#     axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 0.5, size = 9, color = "black"),
+#     
+#     
+#     legend.position = "bottom",
+#     legend.text  = element_text(face = "bold", color = "black", size = 11),
+#     legend.title = element_blank()
+#   ) +
+#   scale_x_continuous(
+#   limits = c(-1.2, 1.2),
+#   breaks = seq(-1, 1, 0.5)
+# )+
+#   
+#   labs(
+#     #title = "Delta DDF (Drought - ND; hours) by Site ordered by Aridity Class",
+#     x = "ΔDDF (hours)",
+#     y = element_blank()
+#   )
+# 
+# print(p1)
+# 
+# 
+# ggsave(
+#   file.path(output_dir, "BarPlots_DeltaDDF_by_AI.png"),
+#   p1,
+#   width = 10,
+#   height = 6,
+#   dpi = 600,
+#   bg = "white",
+#   units = "in",
+#   device = ragg::agg_png
+# )
+# 
+# ```
+# 
+# ```{r Barplots_AI_cat_LS, fig.cap= "Figure Delta DDF by AI_cat and sitename."}
+# 
+# knitr::opts_chunk$set(
+#   echo = FALSE,      # Hide code
+#   warning = FALSE,   # Hide warnings
+#   message = FALSE    # Optional: hide package loading messages
+# )
+# 
+# library(dplyr)
+# library(tidyr)
+# library(ggplot2)
+# 
+# theme_ddf_facet <- theme_classic() +
+#   theme(
+#     legend.position = "none",
+#     axis.line = element_line(linewidth = 0.8, color = "black"),
+#     axis.text.x = element_text(size = 12, face = "bold", color = "black"),
+#     axis.text.y = element_text(size = 13, face = "bold", color = "black"),
+#     axis.ticks = element_line(color = "black", linewidth = 0.8),
+#     axis.text = element_text(size = 10, face = "bold", color = "black"),
+#     axis.title.y = element_text(size = 14, face = "bold", color = "black"),
+#     strip.text = element_text(size = 12, face = "bold", color = "black"),
+#     panel.grid.major.x = element_line(linewidth = 0.4, color = "grey90"),
+#     panel.grid.minor.x = element_line(linewidth = 0.3, color = "grey95"),
+#     plot.title = element_text(size = 15, face = "bold", hjust = 0.5)
+#   )
+# 
+# # prep for LS vs ND
+# df_ls <- df %>%
+#   filter(drought_cat %in% c("LS", "ND")) %>%
+#   mutate(
+#     drought_cat = factor(drought_cat, levels = c("ND", "LS")),
+#     AI_cat = factor(AI_cat, levels = c("Arid", "Humid"))
+#   )
+# 
+# # one AI_cat per site
+# site_ai <- df_ls %>%
+#   count(sitename, AI_cat, name = "n") %>%
+#   arrange(sitename, desc(n)) %>%
+#   group_by(sitename) %>%
+#   slice(1) %>%
+#   ungroup() %>%
+#   dplyr::select(sitename, AI_cat)
+# 
+# # one mean_AI per site
+# site_mean_ai <- df_ls %>%
+#   group_by(sitename) %>%
+#   summarise(mean_AI = mean(mean_AI, na.rm = TRUE), .groups = "drop")
+# 
+# # mean DDF per site x drought_cat, then delta
+# delta_site <- df_ls %>%
+#   group_by(sitename, drought_cat) %>%
+#   summarise(
+#     mean_DDF = mean(DDF, na.rm = TRUE),
+#     n_days   = n(),
+#     .groups  = "drop"
+#   ) %>%
+#   pivot_wider(
+#     names_from = drought_cat,
+#     values_from = c(mean_DDF, n_days)
+#   ) %>%
+#   mutate(delta_DDF = mean_DDF_LS - mean_DDF_ND) %>%
+#   left_join(site_ai, by = "sitename") %>%
+#   left_join(site_mean_ai, by = "sitename") %>%
+#   filter(!is.na(delta_DDF), !is.na(AI_cat), !is.na(mean_AI)) %>%
+#   arrange(mean_AI) %>%
+#   mutate(sitename = factor(sitename, levels = sitename))
+# 
+# ai_cols <- c(
+#   "Arid" = "#E4572E",
+#   "Humid" = "#17BEBB"
+# )
+# 
+# p1 <- ggplot(delta_site, aes(x = delta_DDF, y = sitename, fill = AI_cat)) +
+#   geom_vline(
+#     xintercept = c(-1, -0.5, 0.5, 1),
+#     linewidth = 0.6,
+#     color = "gray50",
+#     linetype = "dashed"
+#   ) +
+#   geom_col(width = 0.85) +
+#   coord_flip() +
+#   scale_fill_manual(values = ai_cols) +
+#   geom_vline(xintercept = 0, linewidth = 0.8, color = "gray30") +
+#   theme_ddf_facet +
+#   theme(
+#     axis.line = element_line(linewidth = 0.8, color = "black"),
+#     plot.title  = element_text(size = 12, face = "bold", color = "black", hjust = 0.5),
+#     axis.text = element_text(size = 12),
+#     axis.title = element_text(size = 12, face = "bold"),
+#     axis.text.y = element_text(color = "black", face = "bold"),
+#     axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 0.5, size = 9, color = "black"),
+#     legend.position = "bottom",
+#     legend.text  = element_text(face = "bold", color = "black", size = 11),
+#     legend.title = element_blank()
+#   ) +
+#   scale_x_continuous(
+#     limits = c(-1.2, 1.2),
+#     breaks = seq(-1, 1, 0.5)
+#   ) +
+#   labs(
+#     x = "LS ΔDDF (hours)",
+#     y = NULL
+#   )
+# 
+# print(p1)
+# 
+# ggsave(
+#   file.path(output_dir, "BarPlots_DeltaDDF_by_AI_LS.png"),
+#   p1,
+#   width = 10,
+#   height = 6,
+#   dpi = 600,
+#   bg = "white",
+#   units = "in",
+#   device = ragg::agg_png
+# )
+# 
+# ```
+# 
+# ```{r Barplots_AI_cat_MS, fig.cap= "Figure Delta DDF by AI_cat and sitename."}
+# 
+# knitr::opts_chunk$set(
+#   echo = FALSE,      # Hide code
+#   warning = FALSE,   # Hide warnings
+#   message = FALSE    # Optional: hide package loading messages
+# )
+# 
+# library(dplyr)
+# library(tidyr)
+# library(ggplot2)
+# 
+# theme_ddf_facet <- theme_classic() +
+#   theme(
+#     legend.position = "none",
+#     axis.line = element_line(linewidth = 0.8, color = "black"),
+#     axis.text.x = element_text(size = 12, face = "bold", color = "black"),
+#     axis.text.y = element_text(size = 13, face = "bold", color = "black"),
+#     axis.ticks = element_line(color = "black", linewidth = 0.8),
+#     axis.text = element_text(size = 14, face = "bold", color = "black"),
+#     axis.title.y = element_text(size = 12, face = "bold", color = "black"),
+#     strip.text = element_text(size = 12, face = "bold", color = "black"),
+#     panel.grid.major.x = element_line(linewidth = 0.4, color = "grey90"),
+#     panel.grid.minor.x = element_line(linewidth = 0.3, color = "grey95"),
+#     plot.title = element_text(size = 15, face = "bold", hjust = 0.5)
+#   )
+# 
+# df_ms <- df %>%
+#   filter(drought_cat %in% c("MS", "ND")) %>%
+#   mutate(
+#     drought_cat = factor(drought_cat, levels = c("ND", "MS")),
+#     AI_cat = factor(AI_cat, levels = c("Arid", "Humid"))
+#   )
+# 
+# # one AI_cat per site
+# site_ai <- df_ms %>%
+#   count(sitename, AI_cat, name = "n") %>%
+#   arrange(sitename, desc(n)) %>%
+#   group_by(sitename) %>%
+#   slice(1) %>%
+#   ungroup() %>%
+#   dplyr::select(sitename, AI_cat)
+# 
+# # one mean_AI per site
+# site_mean_ai <- df_ms %>%
+#   group_by(sitename) %>%
+#   summarise(mean_AI = mean(mean_AI, na.rm = TRUE), .groups = "drop")
+# 
+# # site-level delta
+# delta_site <- df_ms %>%
+#   filter(drought_cat %in% c("ND", "MS")) %>%
+#   group_by(sitename) %>%
+#   filter(all(c("ND", "MS") %in% drought_cat)) %>%
+#   ungroup() %>%
+#   group_by(sitename, drought_cat) %>%
+#   summarise(
+#     mean_DDF = mean(DDF, na.rm = TRUE),
+#     n_days   = n(),
+#     .groups  = "drop"
+#   ) %>%
+#   pivot_wider(
+#     names_from  = drought_cat,
+#     values_from = c(mean_DDF, n_days)
+#   ) %>%
+#   mutate(delta_DDF = mean_DDF_MS - mean_DDF_ND) %>%
+#   left_join(site_ai, by = "sitename") %>%
+#   left_join(site_mean_ai, by = "sitename") %>%
+#   filter(!is.na(delta_DDF), !is.na(AI_cat), !is.na(mean_AI)) %>%
+#   arrange(mean_AI) %>%
+#   mutate(sitename = factor(sitename, levels = sitename))
+# 
+# ai_cols <- c(
+#   "Arid" = "#E4572E",
+#   "Humid" = "#17BEBB"
+# )
+# 
+# p1 <- ggplot(delta_site, aes(x = delta_DDF, y = sitename, fill = AI_cat)) +
+#   geom_vline(
+#     xintercept = c(-1, -0.5, 0.5, 1),
+#     linewidth = 0.6,
+#     color = "gray50",
+#     linetype = "dashed"
+#   ) +
+#   geom_col(width = 0.85) +
+#   coord_flip() +
+#   scale_fill_manual(values = ai_cols) +
+#   geom_vline(xintercept = 0, linewidth = 0.8, color = "gray30") +
+#   theme_ddf_facet +
+#   theme(
+#     axis.line = element_line(linewidth = 0.8, color = "black"),
+#     plot.title = element_text(size = 12, face = "bold", color = "black", hjust = 0.5),
+#     axis.text = element_text(size = 12),
+#     axis.title = element_text(size = 12, face = "bold"),
+#     axis.text.y = element_text(color = "black", face = "bold"),
+#     axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 0.5, size = 9, color = "black"),
+#     legend.position = "bottom",
+#     legend.text = element_text(face = "bold", color = "black", size = 11),
+#     legend.title = element_blank()
+#   ) +
+#   scale_x_continuous(
+#     limits = c(-1.2, 1.2),
+#     breaks = seq(-1, 1, 0.5)
+#   ) +
+#   labs(
+#     x = "MS ΔDDF (hours)",
+#     y = NULL
+#   )
+# 
+# print(p1)
+# 
+# ggsave(
+#   file.path(output_dir, "BarPlots_DeltaDDF_by_AI_MS.png"),
+#   p1,
+#   width = 4,
+#   height = 6,
+#   dpi = 600,
+#   bg = "white",
+#   units = "in",
+#   device = ragg::agg_png
+# )
+# 
+# ```
+# 
+
+
+
