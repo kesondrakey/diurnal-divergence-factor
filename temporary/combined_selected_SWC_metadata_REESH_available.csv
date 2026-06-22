@@ -1,0 +1,13 @@
+sitename,swc_selected,badm_swc_variable,swc_height,,metadata_source
+US-JO2,SWC_1_1_1,SWC_1_1_1,-0.05,,Ameriflux
+US-ME2,SWC_F_MDS_1,SWC_1_1_1,-0.1,,Fluxnet
+US-ME6,SWC_F_MDS_1,SWC_1_1_1,-0.1,,Fluxnet
+US-MMS,SWC_F_MDS_1,SWC_1_1_1,-0.3,,Fluxnet
+US-MOZ,SWC_F_MDS_1,SWC_1_1_1,-0.1,,Fluxnet
+US-NC2,SWC_1_1_1,SWC_1_1_1,-0.3,,Ameriflux
+US-SP1,SWC_F_MDS_1,SWC_1_1_1,-0.15,,Fluxnet
+US-SRM,SWC_F_MDS_1,SWC_PI_1_1_A,-0.05,,Fluxnet
+US-TON,SWC_F_MDS_1,SWC_PI_1_1_A,-0.001,,Fluxnet
+US-UMB,SWC_F_MDS_1,SWC_1_1_1,-0.15,,Fluxnet
+US-UMD,SWC_F_MDS_1,SWC_1_1_1,-0.15,,Fluxnet
+US-VAR,SWC_F_MDS_1,SWC_1_1_1,-0.001,,Fluxnet
