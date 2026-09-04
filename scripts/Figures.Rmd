@@ -352,9 +352,216 @@ ggsave(file.path(output_dir, "Figure_3.png"),
        droughtplot, width = 8, height = 2.5, dpi = 300, bg = "white", units = "in")
 ```
 
+
 \newpage
-## Figure 4. Drought Severity
-```{r Fig4, fig.cap = "Comparison of DDF distributions across drought severity categories, for 40 pooled flux tower sites. Dotted horizontal lines indicate mean ND timing. Boxplots show medians (black horizontal lines) and means (white points); density overlays Gaussian kernel estimates (bandwidth = 0.4). Statistical significance: Tukey HSD post-hoc comparisons (letters denote statistically significant groups). Outliers were removed for plotting purposes but not analyses"}
+## Figure 4. Delta DDF barplots organized by aridity
+```{r Fig4, fig.cap= "Site-level drought effects on mean DDF (delta DDF  = DDFdrought – DDFND), organized by site aridity class then by magnitude of the DDF signal. Negative values indicate earlier ET peak timing during drought"}
+
+knitr::opts_chunk$set(
+  echo = FALSE,      # Hide code
+  warning = FALSE,   # Hide warnings
+  message = FALSE    # Optional: hide package loading messages
+)
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggpattern)
+
+theme_ddf_facet <- theme_classic() +
+  theme(
+    legend.position = "none",
+
+    axis.line = element_line(linewidth = 0.8, color = "black"),
+    axis.text.x = element_text(size = 14, face = "bold", color = "black"),
+    axis.text.y = element_text(size = 14, face = "bold", color = "black"),
+    axis.ticks = element_line(color = "black", linewidth = 0.8),
+    axis.title.y = element_text(size = 14, face = "bold", color = "black"),
+    axis.title.x = element_text(size = 12, face = "bold", color = "black"),
+    strip.text = element_text(size = 12, face = "bold", color = "black"),
+
+    #panel.grid.major.x = element_line(linewidth = 0.4, color = "grey90"),
+    #anel.grid.minor.x = element_line(linewidth = 0.3, color = "grey95"),
+
+    plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
+
+    # transparency
+    panel.background = element_rect(fill = NA, color = NA),
+    plot.background = element_rect(fill = NA, color = NA),
+    legend.background = element_rect(fill = NA, color = NA),
+    legend.box.background = element_rect(fill = NA, color = NA)
+  )
+
+# 1) Prep
+df <- Daily %>%
+  filter(!is.na(Drought), !is.na(DDF), !is.na(AI_cat), !is.na(Veg), !is.na(mean_AI)) %>%
+  mutate(
+    Drought = factor(Drought, levels = c("ND", "Drought")),
+    Veg     = factor(Veg, levels = c("DBF", "ENF", "GRA", "SHR")),
+    AI_cat  = factor(AI_cat, levels = c("Arid", "Humid"))
+  )
+
+# Site-level Drought vs ND significance tests
+site_tests <- df %>%
+  group_by(sitename) %>%
+  filter(
+    any(Drought == "ND"),
+    any(Drought == "Drought")
+  ) %>%
+  summarise(
+    p_value = tryCatch(
+      t.test(
+        DDF[Drought == "Drought"],
+        DDF[Drought == "ND"],
+        var.equal = FALSE
+      )$p.value,
+      error = function(e) NA_real_
+    ),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    sig = case_when(
+      p_value < 0.001 ~ "***",
+      p_value < 0.01  ~ "**",
+      p_value < 0.05  ~ "*",
+      TRUE            ~ "ns"
+    )
+  )
+
+
+
+# 2) One veg / AI_cat / mean_AI per site
+site_veg <- df %>%
+  count(sitename, Veg, name = "n") %>%
+  arrange(sitename, desc(n)) %>%
+  group_by(sitename) %>%
+  slice(1) %>%
+  ungroup() %>%
+  dplyr::select(sitename, Veg)
+
+site_ai <- df %>%
+  count(sitename, AI_cat, name = "n") %>%
+  arrange(sitename, desc(n)) %>%
+  group_by(sitename) %>%
+  slice(1) %>%
+  ungroup() %>%
+  dplyr::select(sitename, AI_cat)
+
+site_mean_ai <- df %>%
+  group_by(sitename) %>%
+  summarise(mean_AI = mean(mean_AI, na.rm = TRUE), .groups = "drop")
+
+# 3) Mean DDF per site × class, then delta
+delta_site <- df %>%
+  group_by(sitename, Drought) %>%
+  summarise(
+    mean_DDF = mean(DDF, na.rm = TRUE),
+    n_days   = n(),
+    .groups  = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = Drought,
+    values_from = c(mean_DDF, n_days)
+  ) %>%
+  mutate(delta_DDF = mean_DDF_Drought - mean_DDF_ND) %>%
+  left_join(site_veg, by = "sitename") %>%
+  left_join(site_ai, by = "sitename") %>%
+  left_join(site_mean_ai, by = "sitename") %>%
+  left_join(site_tests, by = "sitename") %>%
+  filter(
+    !is.na(delta_DDF),
+    !is.na(Veg),
+    !is.na(AI_cat),
+    !is.na(mean_AI)
+  ) %>%
+  arrange(delta_DDF) %>%
+  mutate(
+    site_order = row_number(),
+
+    # Put stars just beyond the end of each bar
+    sig_y = if_else(
+      delta_DDF < 0,
+      delta_DDF - 0.06,
+      delta_DDF + 0.06
+    ),
+
+    sitename = factor(sitename, levels = sitename)
+  )
+
+ai_cols <- c(
+  "Arid" = "#E4572E",
+  "Humid" = "#17BEBB"
+)
+
+p1 <- ggplot(
+  delta_site,
+  aes(x = site_order, y = delta_DDF, fill = AI_cat, pattern = AI_cat)
+) +
+  geom_hline(
+    yintercept = c(-0.5, 0.5),
+    linewidth = 0.6,
+    color = "gray50",
+    linetype = "dashed"
+  ) +
+  geom_hline(yintercept = 0, linewidth = 0.8, color = "gray30") +
+ geom_col(width = 0.85, color = "black") +
+  geom_col(width = 0.85, color = "black") +
+
+geom_text(
+  aes(
+    y = sig_y,
+    label = sig
+  ),
+  color = "black",
+  size = 4.5,
+  fontface = "bold",
+  inherit.aes = TRUE
+) +
+  scale_fill_manual(values = ai_cols) +
+  scale_pattern_manual(values = c("Arid" = "none", "Humid" = "stripe")) +
+  scale_x_continuous(
+    breaks = delta_site$site_order,
+    labels = delta_site$sitename,
+    expand = expansion(mult = c(0.01, 0.03))
+  ) +
+  scale_y_continuous(
+    #limits = c(-1.2, 1.2),
+    breaks = seq(-1, 1, 0.5)
+  ) +
+  theme_ddf_facet +
+  theme(
+    axis.line = element_line(linewidth = 0.8, color = "black"),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 10, color = "black"),
+    axis.text.y = element_text(size = 10, face = "bold", color = "black"),
+    axis.title = element_text(size = 12, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(face = "bold", color = "black", size = 11),
+    legend.title = element_blank(),
+    plot.margin = margin(20, 10, 10, 10)
+  ) +
+  labs(
+    x = NULL,
+    y = "ΔDDF (hours)"
+  )
+
+print(p1)
+
+ggsave(
+  file.path(output_dir, "Figure_4.png"),
+  p1,
+  width = 12,
+  height = 8,
+  dpi = 600,
+  bg = "white",
+  units = "in",
+  device = ragg::agg_png
+)
+
+```
+
+\newpage
+## Figure 5. Drought Severity
+```{r Fig5, fig.cap = "Comparison of DDF distributions across drought severity categories, for 40 pooled flux tower sites. Dotted horizontal lines indicate mean ND timing. Boxplots show medians (black horizontal lines) and means (white points); density overlays Gaussian kernel estimates (bandwidth = 0.4). Statistical significance: Tukey HSD post-hoc comparisons (letters denote statistically significant groups). Outliers were removed for plotting purposes but not analyses"}
 knitr::opts_chunk$set(
   echo = FALSE,      
   warning = FALSE,   
@@ -461,14 +668,16 @@ droughtcats <- ggplot(dat3, aes(x = x_pos, y = DDF, fill = drought_cat, group = 
 
 print(droughtcats)
 
-ggsave(file.path(output_dir,"Figure_4.png"),
+ggsave(file.path(output_dir,"Figure_5.png"),
        droughtcats, width=8, height=3.5, dpi=300, bg="white", units="in")
 
 ```
 
+
+
 \newpage
-## Figure 5. Aridity - Drought vs. non-drought
-```{r Fig5,  fig.cap= "Comparison of DDF distributions across aridity classes during drought and non-drought conditions. Dotted horizontal lines indicate mean ND timing. Boxplots show medians (black horizontal lines) and means (white points); density overlays are Gaussian kernel estimates (bandwidth = 0.4). Asterisks indicate significant differences between drought and ND within each aridity class (Welch’s t-test, *** p < 0.001). Outliers were removed for plotting purposes but not analyses"}
+## Figure 6. Aridity - Drought vs. non-drought
+```{r Fig6,  fig.cap= "Comparison of DDF distributions across aridity classes during drought and non-drought conditions. Dotted horizontal lines indicate mean ND timing. Boxplots show medians (black horizontal lines) and means (white points); density overlays are Gaussian kernel estimates (bandwidth = 0.4). Asterisks indicate significant differences between drought and ND within each aridity class (Welch’s t-test, *** p < 0.001). Outliers were removed for plotting purposes but not analyses"}
 knitr::opts_chunk$set(
   echo = FALSE,      
   warning = FALSE,   
@@ -559,151 +768,12 @@ AI_catDroughtPlot <- ggplot(AI_cat_df, aes(x = x_pos, y = DDF, fill = Drought, g
 
 print(AI_catDroughtPlot)
 
-ggsave(file.path(output_dir,"Figure_5.png"),
+ggsave(file.path(output_dir,"Figure_6.png"),
        AI_catDroughtPlot, width=8, height=6, dpi=300, bg="white", units="in")
 
 ```
 
-\newpage
-## Figure 6. Delta DDF barplots organized by aridity
-```{r Fig6, fig.cap= "Site-level drought effects on mean DDF (delta DDF  = DDFdrought – DDFND), organized by site aridity class then by magnitude of the DDF signal. Negative values indicate earlier ET peak timing during drought"}
 
-knitr::opts_chunk$set(
-  echo = FALSE,     
-  warning = FALSE,   
-  message = FALSE    
-)
-
-library(dplyr)
-library(tidyr)
-library(ggplot2)
-library(ggpattern)
-
-theme_ddf_facet <- theme_classic() +
-  theme(
-    legend.position = "none",
-    axis.line = element_line(linewidth = 0.8, color = "black"),
-    axis.text.x = element_text(size = 14, face = "bold", color = "black"),
-    axis.text.y = element_text(size = 14, face = "bold", color = "black"),
-    axis.ticks = element_line(color = "black", linewidth = 0.8),
-    axis.title.y = element_text(size = 14, face = "bold", color = "black"),
-    axis.title.x = element_text(size = 12, face = "bold", color = "black"),
-    strip.text = element_text(size = 12, face = "bold", color = "black"),
-    panel.grid.major.x = element_line(linewidth = 0.4, color = "grey90"),
-    panel.grid.minor.x = element_line(linewidth = 0.3, color = "grey95"),
-    plot.title = element_text(size = 15, face = "bold", hjust = 0.5)
-  )
-
-# 1) Prep
-df <- Daily %>%
-  filter(!is.na(Drought), !is.na(DDF), !is.na(AI_cat), !is.na(Veg), !is.na(mean_AI)) %>%
-  mutate(
-    Drought = factor(Drought, levels = c("ND", "Drought")),
-    Veg     = factor(Veg, levels = c("DBF", "ENF", "GRA", "SHR")),
-    AI_cat  = factor(AI_cat, levels = c("Arid", "Humid"))
-  )
-
-# 2) One veg / AI_cat / mean_AI per site
-site_veg <- df %>%
-  count(sitename, Veg, name = "n") %>%
-  arrange(sitename, desc(n)) %>%
-  group_by(sitename) %>%
-  slice(1) %>%
-  ungroup() %>%
-  dplyr::select(sitename, Veg)
-
-site_ai <- df %>%
-  count(sitename, AI_cat, name = "n") %>%
-  arrange(sitename, desc(n)) %>%
-  group_by(sitename) %>%
-  slice(1) %>%
-  ungroup() %>%
-  dplyr::select(sitename, AI_cat)
-
-site_mean_ai <- df %>%
-  group_by(sitename) %>%
-  summarise(mean_AI = mean(mean_AI, na.rm = TRUE), .groups = "drop")
-
-# 3) Mean DDF per site × class, then delta
-delta_site <- df %>%
-  group_by(sitename, Drought) %>%
-  summarise(
-    mean_DDF = mean(DDF, na.rm = TRUE),
-    n_days   = n(),
-    .groups  = "drop"
-  ) %>%
-  pivot_wider(
-    names_from = Drought,
-    values_from = c(mean_DDF, n_days)
-  ) %>%
-  mutate(delta_DDF = mean_DDF_Drought - mean_DDF_ND) %>%
-  left_join(site_veg, by = "sitename") %>%
-  left_join(site_ai, by = "sitename") %>%
-  left_join(site_mean_ai, by = "sitename") %>%
-  filter(!is.na(delta_DDF), !is.na(Veg), !is.na(AI_cat), !is.na(mean_AI)) %>%
-  arrange(delta_DDF) %>%
-  mutate(
-    site_order = row_number(),
-    sitename = factor(sitename, levels = sitename)
-  )
-
-ai_cols <- c(
-  "Arid" = "#E4572E",
-  "Humid" = "#17BEBB"
-)
-
-p1 <- ggplot(
-  delta_site,
-  aes(x = site_order, y = delta_DDF, fill = AI_cat, pattern = AI_cat)
-) +
-  geom_hline(
-    yintercept = c(-0.5, 0.5),
-    linewidth = 0.6,
-    color = "gray50",
-    linetype = "dashed"
-  ) +
-  geom_hline(yintercept = 0, linewidth = 0.8, color = "gray30") +
- geom_col(width = 0.85, color = "black") +
-  scale_fill_manual(values = ai_cols) +
-  scale_pattern_manual(values = c("Arid" = "none", "Humid" = "stripe")) +
-  scale_x_continuous(
-    breaks = delta_site$site_order,
-    labels = delta_site$sitename,
-    expand = expansion(mult = c(0.01, 0.03))
-  ) +
-  scale_y_continuous(
-    breaks = seq(-1, 1, 0.5)
-  ) +
-  theme_ddf_facet +
-  theme(
-    axis.line = element_line(linewidth = 0.8, color = "black"),
-    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 10, color = "black"),
-    axis.text.y = element_text(size = 10, face = "bold", color = "black"),
-    axis.title = element_text(size = 12, face = "bold"),
-    legend.position = "bottom",
-    legend.text = element_text(face = "bold", color = "black", size = 11),
-    legend.title = element_blank(),
-    plot.margin = margin(20, 10, 10, 10)
-  ) +
-  labs(
-    x = NULL,
-    y = "ΔDDF (hours)"
-  )
-
-print(p1)
-
-ggsave(
-  file.path(output_dir, "Figure_6.png"),
-  p1,
-  width = 12,
-  height = 8,
-  dpi = 600,
-  bg = "white",
-  units = "in",
-  device = ragg::agg_png
-)
-
-```
 
 \newpage
 ## Figure 7. Aridity - drought severity
