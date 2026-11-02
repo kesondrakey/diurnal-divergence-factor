@@ -41,7 +41,7 @@ library(readr); library(stringr); library(tinytex); library(knitr)
 #IMPORTANT: Relevant File paths - change this to your own directory
 
 # Dataset input dir
-daily_path <- "E:/Github/diurnal-divergence-factor/data/Masterfile.csv"
+daily_path <- "E:/Github/diurnal-divergence-factor/data/DDF_Data.csv"
 SRSfile <- read.csv("E:/Github/diurnal-divergence-factor/data/US-SRS.csv")
 
 # Figure output dir

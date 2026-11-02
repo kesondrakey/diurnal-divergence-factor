@@ -33,7 +33,7 @@ library(terra)
 library(sf)
 
 #Call masterfile here:
-data <- read.csv("E:/Github/diurnal-divergence-factor/data/Masterfile.csv") %>%
+data <- read.csv("E:/Github/diurnal-divergence-factor/data/DDF_Data.csv") %>%
   dplyr::mutate(Lat = Latitude,
                 Long = Longitude) %>%
   dplyr::select(sitename, Veg, Lat, Long, AI_cat)%>%

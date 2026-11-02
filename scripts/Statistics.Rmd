@@ -18,9 +18,9 @@ knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 #IMPORTANT: 
 #Change "E:/Github/diurnal-divergence-factor/" to your own file location 
 #input dir
-daily_path <- "E:/Github/diurnal-divergence-factor/data/Masterfile.csv"
+daily_path <- "E:/Github/diurnal-divergence-factor/data/publication_subset/DDF_Data.csv"
 #output dir
-output_dir <- "E:/Github/diurnal-divergence-factor/tables"
+output_dir <- "E:/Github/diurnal-divergence-factor/tables_test"
 
 
 #Relevant packages installation
