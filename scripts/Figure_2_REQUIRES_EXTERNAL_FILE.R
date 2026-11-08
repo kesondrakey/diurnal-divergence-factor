@@ -9,8 +9,10 @@
 #Zomer, R.J.; Xu, J.; Trabuco, A. 2022. Version 3 of the Global Aridity Index and Potential Evapotranspiration Database. Scientific Data 9, 409. https://www.nature.com/articles/s41597-022-01493-1
 #https://figshare.com/articles/dataset/Global_Aridity_Index_and_Potential_Evapotranspiration_ET0_Climate_Database_v2/7504448/6
 #https://doi.org/10.57760/sciencedb.nbsdc.00086
-rast <- rast("//FILE_LOCATION_HERE/Global-AI_ET0__annual_v3_1/ai_v31_yr.tif")
-
+#rast <- rast("//FILE_LOCATION_HERE/Global-AI_ET0__annual_v3_1/ai_v31_yr.tif")
+rast <- terra::rast(
+  "//ewa-fluxfp1/fluxtower/Ameriflux_Data/Update_08_2025/Step2_Metadata/Step1b_AridityIndex/Step2_extract/Global-AI_ET0__annual_v3_1/ai_v31_yr.tif"
+)
 
 
 #Relevant packages installation
