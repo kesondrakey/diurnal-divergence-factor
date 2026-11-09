@@ -1,99 +1,86 @@
-#IMPORTANT: This script requires the aridity index ai_v31_yr.tif which needs to be acquired externally
-#Change "E:/Github/diurnal-divergence-factor/" to your own file location on line 36 and 97
+# Figure 2: U.S. aridity and flux towers, with transparent lakes and land-only state lines.
+# Aridity: Zomer et al. (2022), https://doi.org/10.1038/s41597-022-01493-1
+# Lake and boundary files: Natural Earth, already saved in data/map_boundaries.
 
-
-
-#Download and call the Aridity Index file (it was too large to include in the github directory). 
-#Information here:
-#Global Aridity Index and Potential Evapotranspiration (ET0) Database: Version 3 
-#Zomer, R.J.; Xu, J.; Trabuco, A. 2022. Version 3 of the Global Aridity Index and Potential Evapotranspiration Database. Scientific Data 9, 409. https://www.nature.com/articles/s41597-022-01493-1
-#https://figshare.com/articles/dataset/Global_Aridity_Index_and_Potential_Evapotranspiration_ET0_Climate_Database_v2/7504448/6
-#https://doi.org/10.57760/sciencedb.nbsdc.00086
-#rast <- rast("//FILE_LOCATION_HERE/Global-AI_ET0__annual_v3_1/ai_v31_yr.tif")
-rast <- terra::rast(
-  "//ewa-fluxfp1/fluxtower/Ameriflux_Data/Update_08_2025/Step2_Metadata/Step1b_AridityIndex/Step2_extract/Global-AI_ET0__annual_v3_1/ai_v31_yr.tif"
-)
-
-
-#Relevant packages installation
-packages <- c(
-  "dplyr", "ggplot2", "ggspatial",
-  "terra", "sf")
-
-to_install <- packages[!packages %in% installed.packages()[, "Package"]]
-
-if (length(to_install) > 0) {
-  install.packages(to_install)
-}
-
-invisible(lapply(packages, library, character.only = TRUE))
-
+# Run once if needed:
+# install.packages(c("dplyr", "ggplot2", "ggspatial", "terra", "sf"))
 library(dplyr)
 library(ggplot2)
-library(ggspatial) 
+library(ggspatial)
 library(terra)
 library(sf)
 
-#Call masterfile here:
-data <- read.csv("E:/Github/diurnal-divergence-factor/data/DDF_Data.csv") %>%
-  dplyr::mutate(Lat = Latitude,
-                Long = Longitude) %>%
-  dplyr::select(sitename, Veg, Lat, Long, AI_cat)%>%
+# 1. File locations -----------------------------------------------------------
+project_dir <- "C:/Users/keyke/Documents/GitHub/diurnal-divergence-factor"
+raster_file <- ".../ai_v31_yr.tif" #This file is sourced from Zomer et al. (2022), citation on line 1-2
+output_dir <- file.path(project_dir, "figures")
+boundary_dir <- file.path(project_dir, "data", "map_boundaries")
+dir.create(output_dir, showWarnings = FALSE)
+
+# 2. Tower locations and map boundaries --------------------------------------
+data <- read.csv(file.path(project_dir, "data", "DDF_Data.csv")) %>%
+  dplyr::mutate(Lat = Latitude, Long = Longitude) %>%
+  dplyr::select(sitename, Veg, Lat, Long, AI_cat) %>%
   unique()
 
-tibble::as_tibble(data)
+us <- readRDS(file.path(boundary_dir, "ne_50m_admin_0_countries.rds")) %>%
+  dplyr::filter(admin == "United States of America")
+lakes <- readRDS(file.path(boundary_dir, "ne_50m_lakes.rds"))
+states <- readRDS(file.path(boundary_dir, "ne_50m_admin_1_states_provinces_lines.rds")) %>%
+  dplyr::filter(adm0_a3 == "USA")
 
-# Define the extent for the US
-us_extent <- ext(c(-125, -66.5, 24.4, 49.4))  # Rough bounds for the continental US
+# Keep state borders on U.S. land, removing portions that cross lakes.
+states_land <- terra::intersect(terra::vect(states), terra::vect(us))
+states_land <- terra::erase(states_land, terra::vect(lakes))
+states <- st_as_sf(states_land)
 
-# Crop the raster to the US extent
-rast_cropped <- crop(rast, us_extent)
+# 3. Crop to the U.S. and clear lakes -----------------------------------------
+aridity <- terra::rast(raster_file)
+us_extent <- terra::ext(-125, -66.5, 24.4, 49.4)
+rast_cropped <- terra::crop(aridity, us_extent)
+rast_cropped <- terra::ifel(rast_cropped == 0, NA, rast_cropped)
+rast_us <- terra::mask(rast_cropped, terra::vect(us), touches = FALSE)
+rast_land <- terra::mask(rast_us, terra::vect(lakes), inverse = TRUE)
 
-rast_cropped_df <- as.data.frame(rast_cropped, xy=TRUE)
-
+# Keep missing cells so geom_raster has a regular grid.
+rast_cropped_df <- as.data.frame(rast_land, xy = TRUE, na.rm = FALSE)
+names(rast_cropped_df)[3] <- "aridity_raw"
+rast_cropped_df$layer_scaled <- rast_cropped_df$aridity_raw * 0.0001
 breaks <- c(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3, Inf)
-colors <- c("#ffd1d1",  
-            "#ffdfae",  
-            "#fff3cb",  
-            "#f7edd5", 
-            "#ebf0e1",  
-            "#deeaf6",  
-            "#c1d7f0", 
-            "#a6c8ea",  
-            "#8cb9e4",  
-            "#72aae1",  
-            "#589cd7",  
-            "#3f8ecc",  
-            "#2683c1", 
-            "#1069b6")  
+colors <- c("#ffd1d1", "#ffdfae", "#fff3cb", "#f7edd5", "#ebf0e1", "#deeaf6",
+            "#c1d7f0", "#a6c8ea", "#8cb9e4", "#72aae1", "#589cd7", "#3f8ecc",
+            "#2683c1", "#1069b6")
+rast_cropped_df$layer_bins <- cut(rast_cropped_df$layer_scaled, breaks = breaks,
+                                  include.lowest = TRUE, right = FALSE)
 
-
-
-rast_cropped_df$layer_scaled <- ifelse(rast_cropped_df$awi_pm_sr_yr ==0, NA, rast_cropped_df$awi_pm_sr_yr* 0.0001)
-rast_cropped_df$layer_bins <- cut(rast_cropped_df$layer_scaled, breaks = breaks, include.lowest = TRUE, right = FALSE)
-
+# 4. Make the map -------------------------------------------------------------
 plot1 <- ggplot() +
-  geom_raster(data = rast_cropped_df, aes(x = x, y = y, fill = factor(layer_bins))) +
-  scale_fill_manual(values = colors, na.value = "NA") +
+  geom_raster(data = rast_cropped_df, aes(x = x, y = y, fill = layer_bins)) +
+  scale_fill_manual(values = setNames(colors, levels(rast_cropped_df$layer_bins)),
+                    breaks = levels(rast_cropped_df$layer_bins),
+                    na.value = "transparent", name = "Aridity index", drop = FALSE) +
+  geom_sf(data = states, color = "black", alpha = 0.45, linewidth = 0.12) +
   geom_point(
     data = data,
     aes(x = Long, y = Lat, shape = AI_cat),
-    fill = ifelse(data$Veg == "DBF", "#753bbd", 
-                  ifelse(data$Veg == "ENF", "#2F80ED", 
-                         ifelse(data$Veg == "GRA", "#2dc84d", 
-                                ifelse(data$Veg == "SHR", "#ff7f41", "#e03c31")))),
-    color = "black",
-    size = 3,
-    stroke = 0.6
-  )+
-  scale_shape_manual(values = c("Arid"=21, "Humid"=24)) +
-  labs(title = "Flux Tower Locations", x = "Longitude", y = "Latitude",) +
-  annotation_scale()+
-  coord_sf(crs="+proj=longlat +datum=WGS84 +no_defs", xlim = c(-125, -66.5), ylim = c(24.4, 49.4)) +
-  theme_void()+
-  theme(
-    panel.background = element_rect(fill = NA, colour = NA)) 
+    fill = ifelse(data$Veg == "DBF", "#753bbd",
+             ifelse(data$Veg == "ENF", "#2F80ED",
+               ifelse(data$Veg == "GRA", "#2dc84d",
+                 ifelse(data$Veg == "SHR", "#ff7f41", "#e03c31")))),
+    color = "black", size = 5, stroke = 0.6
+  ) +
+  scale_shape_manual(values = c("Arid" = 21, "Humid" = 24), name = "Site climate") +
+  labs(title = "Flux Tower Locations", x = "Longitude", y = "Latitude") +
+  annotation_scale() +
+  coord_sf(crs = 4326, xlim = c(-125, -66.5), ylim = c(24.4, 49.4), expand = FALSE) +
+  theme_void() +
+  theme(panel.background = element_rect(fill = "transparent", color = NA),
+        plot.background = element_rect(fill = "transparent", color = NA),
+        legend.background = element_blank(), legend.box.background = element_blank(),
+        legend.key = element_blank())
 
-plot1
+print(plot1)
 
-ggsave("E:/Github/diurnal-divergence-factor/figures/Figure_2.png", plot = plot1, width = 10, height = 8, units = "in", bg = "transparent", dpi = 1000)
+# 5. Save --------------------------------------------------------------------
+ggsave(file.path(output_dir, "Figure_2_Water_Borders.png"), plot = plot1,
+       width = 10, height = 8, units = "in", bg = "transparent", dpi = 1000)
