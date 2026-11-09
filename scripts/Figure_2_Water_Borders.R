@@ -1,4 +1,4 @@
-# Figure 2: U.S. aridity and flux towers, with white lakes and faint state lines.
+# Figure 2: U.S. aridity and flux towers, with transparent lakes and land-only state lines.
 # Aridity: Zomer et al. (2022), https://doi.org/10.1038/s41597-022-01493-1
 # Lake and boundary files: Natural Earth, already saved in data/map_boundaries.
 
@@ -28,6 +28,11 @@ us <- readRDS(file.path(boundary_dir, "ne_50m_admin_0_countries.rds")) %>%
 lakes <- readRDS(file.path(boundary_dir, "ne_50m_lakes.rds"))
 states <- readRDS(file.path(boundary_dir, "ne_50m_admin_1_states_provinces_lines.rds")) %>%
   dplyr::filter(adm0_a3 == "USA")
+
+# Keep state borders on U.S. land, removing portions that cross lakes.
+states_land <- terra::intersect(terra::vect(states), terra::vect(us))
+states_land <- terra::erase(states_land, terra::vect(lakes))
+states <- st_as_sf(states_land)
 
 # 3. Crop to the U.S. and clear lakes -----------------------------------------
 aridity <- terra::rast(raster_file)
@@ -70,7 +75,9 @@ plot1 <- ggplot() +
   coord_sf(crs = 4326, xlim = c(-125, -66.5), ylim = c(24.4, 49.4), expand = FALSE) +
   theme_void() +
   theme(panel.background = element_rect(fill = "transparent", color = NA),
-        plot.background = element_rect(fill = "transparent", color = NA))
+        plot.background = element_rect(fill = "transparent", color = NA),
+        legend.background = element_blank(), legend.box.background = element_blank(),
+        legend.key = element_blank())
 
 print(plot1)
 
