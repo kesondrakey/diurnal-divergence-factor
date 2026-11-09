@@ -69,8 +69,8 @@ plot1 <- ggplot() +
   annotation_scale() +
   coord_sf(crs = 4326, xlim = c(-125, -66.5), ylim = c(24.4, 49.4), expand = FALSE) +
   theme_void() +
-  theme(panel.background = element_rect(fill = "white", color = NA),
-        plot.background = element_rect(fill = "white", color = NA))
+  theme(panel.background = element_rect(fill = "transparent", color = NA),
+        plot.background = element_rect(fill = "transparent", color = NA))
 
 print(plot1)
 
