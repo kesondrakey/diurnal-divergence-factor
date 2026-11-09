@@ -76,6 +76,4 @@ print(plot1)
 
 # 5. Save --------------------------------------------------------------------
 ggsave(file.path(output_dir, "Figure_2_Water_Borders.png"), plot = plot1,
-       width = 10, height = 8, units = "in", bg = "white", dpi = 1000)
-ggsave(file.path(output_dir, "Figure_2_Water_Borders.pdf"), plot = plot1,
-       width = 10, height = 8, units = "in", bg = "white", device = cairo_pdf)
+       width = 10, height = 8, units = "in", bg = "transparent", dpi = 1000)
